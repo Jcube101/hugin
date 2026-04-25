@@ -3,43 +3,53 @@ import httpx
 import random
 
 TMDB_BASE = "https://api.themoviedb.org/3"
+_client = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(
+            timeout=15.0,
+            limits=httpx.Limits(max_connections=3, max_keepalive_connections=3),
+            transport=httpx.AsyncHTTPTransport(retries=2),
+        )
+    return _client
 
 async def discover_movies(params: dict, limit: int = 5) -> list:
     api_key = os.getenv("TMDB_API_KEY")
-    page = random.randint(1, 3)  # freshness
+    gem = params.get("gem_mode")
+    genres = params.get("genres", [])
 
     query = {
         "api_key": api_key,
         "language": "en-US",
-        "page": page,
+        "page": random.randint(1, 2 if gem else 3),
         "sort_by": params.get("sort_by", "vote_average.desc"),
         "vote_count.gte": 50,
         "vote_average.gte": params.get("vote_floor", 6.5),
-        "with_genres": ",".join(str(g) for g in params.get("genres", [])),
+        "with_genres": str(genres[0]) if gem and genres else ",".join(str(g) for g in genres),
     }
 
-    if params.get("gem_mode"):
+    if gem:
         query["vote_count.lte"] = 3000
         query["vote_average.gte"] = 7.5
 
-    async with httpx.AsyncClient() as client:
-        r = await client.get(f"{TMDB_BASE}/discover/movie", params=query)
-        r.raise_for_status()
-        results = r.json().get("results", [])
-        return results[:limit]
+    r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query)
+    r.raise_for_status()
+    results = r.json().get("results", [])
+    return results[:limit]
 
 async def get_movie_detail(movie_id: int) -> dict:
     api_key = os.getenv("TMDB_API_KEY")
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{TMDB_BASE}/movie/{movie_id}",
-            params={"api_key": api_key, "language": "en-US"}
-        )
-        r.raise_for_status()
-        data = r.json()
-        return {
-            "imdb_id": data.get("imdb_id"),
-            "runtime": data.get("runtime"),
-            "tagline": data.get("tagline"),
-            "genres": [g["name"] for g in data.get("genres", [])],
-        }
+    r = await _get_client().get(
+        f"{TMDB_BASE}/movie/{movie_id}",
+        params={"api_key": api_key, "language": "en-US"}
+    )
+    r.raise_for_status()
+    data = r.json()
+    return {
+        "imdb_id": data.get("imdb_id"),
+        "runtime": data.get("runtime"),
+        "tagline": data.get("tagline"),
+        "genres": [g["name"] for g in data.get("genres", [])],
+    }

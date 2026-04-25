@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -37,17 +40,21 @@ def password_hash():
 async def recommend(req: MoodRequest):
     params = await interpret_mood(req.mood)
     movies = await discover_movies(params)
-    enriched = await asyncio.gather(*[enrich(m) for m in movies])
+    enriched = await enrich_all(movies)
     return {"results": enriched, "params_used": params}
 
 @app.post("/recommend-group")
 async def recommend_group(req: GroupMoodRequest):
     params = await interpret_group_mood(req.moods)
     movies = await discover_movies(params, limit=3)
-    enriched = await asyncio.gather(*[enrich(m) for m in movies])
+    enriched = await enrich_all(movies)
     return {"results": enriched, "params_used": params}
 
-async def enrich(tmdb_movie: dict) -> dict:
-    detail = await get_movie_detail(tmdb_movie["id"])
-    omdb_data = await enrich_with_omdb(detail.get("imdb_id"))
-    return {**tmdb_movie, **detail, **omdb_data}
+async def enrich_all(movies: list) -> list:
+    details = []
+    for m in movies:
+        details.append(await get_movie_detail(m["id"]))
+    omdb_results = await asyncio.gather(
+        *[enrich_with_omdb(d.get("imdb_id")) for d in details]
+    )
+    return [{**m, **d, **o} for m, d, o in zip(movies, details, omdb_results)]

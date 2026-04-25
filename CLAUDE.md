@@ -27,7 +27,9 @@ and reports back. Trusted, perceptive, personal.
 - Claude API is the mood interpreter — free-text in, TMDb params out (JSON)
 - TMDb is the primary data source (Discover endpoint)
 - OMDb is the enrichment layer (RT score, IMDb rating) via shared imdb_id
-- All external calls are async (httpx + asyncio.gather) for speed
+- All external calls are async (httpx). TMDb detail calls are sequential
+  (to avoid TLS connection storms), OMDb enrichment is parallel via
+  asyncio.gather (OMDb uses plain HTTP, no TLS pressure)
 
 ## Repo structure
 hugin/
@@ -40,7 +42,11 @@ hugin/
 ├── .env                 ← Gitignored. Contains all API keys + HUGIN_SEED
 ├── .gitignore
 ├── CLAUDE.md            ← This file
-└── README.md
+├── README.md
+├── SPEC.md
+├── ROADMAP.md
+├── LEARNINGS.md
+└── CONTRIBUTING.md
 
 ## API endpoints
 - GET  /                   → health check
@@ -55,11 +61,16 @@ ANTHROPIC_API_KEY=
 HUGIN_SEED=          ← secret phrase, never commit this
 
 ## Movie result object shape
-Each result returned by /recommend or /recommend-group should contain:
-- id, title, overview, poster_path, release_date, vote_average (from TMDb)
-- imdb_id, runtime, tagline, genres[] (from TMDb detail)
+Each result returned by /recommend or /recommend-group contains the full
+TMDb Discover object merged with TMDb Detail and OMDb enrichment:
+- id, title, overview, poster_path, release_date, vote_average, vote_count,
+  genre_ids, adult, backdrop_path, original_language, original_title,
+  popularity, video (from TMDb Discover)
+- imdb_id, runtime, tagline, genres[] (genre name strings, from TMDb Detail)
 - imdb_rating, rt_score, rated (from OMDb)
-- gem_mode flag if the result came from the hidden gem filter
+
+The gem_mode flag is returned at the response level in params_used, not
+per-movie — all movies in a gem_mode request used the hidden gem filter.
 
 ## Key logic — mood interpreter (mood.py)
 Claude receives a system prompt defining it as Hugin, a movie mood
@@ -78,6 +89,8 @@ When gem_mode is true:
 - vote_count.lte = 3000
 - vote_average.gte = 7.5
 - sort_by = vote_average.desc
+- with_genres limited to the first genre ID only (widens the result pool)
+- random page capped at 2 instead of 3 (avoids empty pages on smaller sets)
 This surfaces high-quality, low-popularity films the algorithms bury.
 
 ## Key logic — password (password.py)
@@ -121,10 +134,34 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 
 ## Build sequence
 1. ✅ Repo created, files scaffolded
-2. [ ] Test /recommend locally with curl
-3. [ ] Test /recommend-group locally
-4. [ ] Confirm password logic works across UTC midnight
+2. ✅ Test /recommend locally with curl
+3. ✅ Test /recommend-group locally
+4. ✅ Confirm password logic works across UTC midnight
 5. [ ] Deploy backend (Railway or Render — same as Word Translator)
 6. [ ] Build frontend in Lovable, point at live API URL
 7. [ ] Add project card to job-joseph.com/projects
 8. [ ] Optional: custom domain hugin.job-joseph.com
+
+## Bugs fixed (during initial build)
+1. **Missing load_dotenv** — main.py never called load_dotenv(), so all
+   API keys read from os.getenv() returned None. Fixed by adding
+   `from dotenv import load_dotenv; load_dotenv()` at the very top of
+   main.py, before any module imports that read env vars at import time.
+2. **Fragile JSON parsing in mood.py** — Claude sometimes wraps responses
+   in markdown code fences or returns genre names ("Comedy") instead of
+   TMDb IDs (35). Fixed with _parse_response(): strips code fences via
+   regex, maps genre name strings to IDs via GENRE_NAME_TO_ID lookup,
+   filters out any remaining non-integer genres, and appends ".desc" to
+   sort_by when Claude omits the suffix.
+3. **httpx connection storm in tmdb.py/omdb.py** — each function created
+   and destroyed its own httpx.AsyncClient. With 5 concurrent
+   get_movie_detail calls, this opened 5 simultaneous TLS handshakes to
+   TMDb's CDN (CloudFront), triggering connection resets. Fixed by using
+   a lazily-initialized shared AsyncClient per module with connection
+   limits (max_connections=3) and transport-level retries.
+4. **Sequential TMDb + parallel OMDb pattern** — the original
+   asyncio.gather over all enrich() calls ran TMDb detail + OMDb
+   enrichment concurrently for all movies. Refactored enrich_all() to
+   call TMDb detail sequentially (reuses the shared client's keepalive
+   connection), then OMDb enrichment in parallel via asyncio.gather
+   (OMDb uses HTTP, no TLS pressure).
