@@ -20,3 +20,5 @@ services:
         sync: false
       - key: HUGIN_SEED
         sync: false
+
+# Live at: https://hugin-5i4y.onrender.com
