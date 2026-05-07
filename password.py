@@ -22,3 +22,8 @@ def get_today_password() -> str:
     raw = hashlib.sha256(f"{seed}{today}".encode()).digest()
     idx = int.from_bytes(raw[:4], "big") % len(WORD_LIST)
     return WORD_LIST[idx]
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+    print(get_today_password())
