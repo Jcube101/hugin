@@ -10,6 +10,14 @@ Hugin is a mood-based movie recommendation API. You describe how you feel in fre
 - **OMDb API** — Rotten Tomatoes scores, IMDb ratings, content ratings
 - **httpx** — async HTTP client with connection pooling
 
+## Live deployment
+
+The backend is deployed on Render (free tier):
+
+- **URL:** https://hugin-5i4y.onrender.com
+- **Health check:** `curl https://hugin-5i4y.onrender.com/` → `{"status": "Hugin is watching"}`
+- **Frontend:** lives at [job-joseph.com/projects/hugin](https://job-joseph.com/projects/hugin) (built as a page in the main site repo)
+
 ## Local setup
 
 ```bash
@@ -36,6 +44,14 @@ uvicorn main:app --reload
 ```
 
 The API runs at `http://127.0.0.1:8000`.
+
+To get today's password locally:
+
+```bash
+python password.py
+```
+
+This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -c "from password import get_today_password; print(get_today_password())"` — that skips `load_dotenv()` and silently produces the wrong password.
 
 ## API endpoints
 
@@ -120,4 +136,4 @@ Response shape is the same as `/recommend`, with 3 results instead of 5.
 
 ## Frontend
 
-The frontend is built separately in [Lovable](https://lovable.dev) and will be linked from the projects page at job-joseph.com. It is not part of this repository.
+The frontend is built as a page inside the main [job-joseph.com](https://job-joseph.com) React app — not a separate Lovable project. It lives at `src/pages/Hugin.tsx` in the main site repo and is accessible at [job-joseph.com/projects/hugin](https://job-joseph.com/projects/hugin). The frontend is not part of this repository.

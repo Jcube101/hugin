@@ -48,7 +48,7 @@ def _parse_response(text: str) -> dict:
 
 async def interpret_mood(mood: str) -> dict:
     response = await client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-haiku-4-5-20251001",
         max_tokens=300,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": f"Mood: {mood}"}]
@@ -58,7 +58,7 @@ async def interpret_mood(mood: str) -> dict:
 async def interpret_group_mood(moods: list[str]) -> dict:
     combined = "\n".join([f"Person {i+1}: {m}" for i, m in enumerate(moods)])
     response = await client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-haiku-4-5-20251001",
         max_tokens=300,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": f"Find the intersection for this group:\n{combined}"}]

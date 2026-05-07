@@ -17,7 +17,7 @@ Hugin solves this by turning a free-text mood description into a curated shortli
 
 ### Why FastAPI
 
-Job already built the Word Translator project with FastAPI. Same pattern, same deployment target (Railway/Render), minimal learning curve. FastAPI's native async support matters because every request fans out to Claude + TMDb + OMDb.
+Job already built the Word Translator project with FastAPI. Same pattern, same deployment target (Render), minimal learning curve. FastAPI's native async support matters because every request fans out to Claude + TMDb + OMDb.
 
 ### Why no database
 
@@ -40,7 +40,7 @@ Hugin is gated by a daily password that rotates at UTC midnight:
 3. `integer % 29` indexes into WORD_LIST (29 evocative single words: ember, dusk, reel, etc.)
 4. The resulting word is today's password
 
-The API only exposes a 16-character hash prefix via `GET /password-hash` — never the seed or the plain password. The frontend independently derives the word using the same seed (stored in its own env) and compares against user input client-side.
+The API only exposes a 16-character hash prefix via `GET /password-hash` — never the seed or the plain password. The frontend independently derives the word using the same seed (hardcoded directly in Hugin.tsx — Lovable personal plan does not support build secrets, so `VITE_HUGIN_SEED` is not read from environment variables) and compares against user input client-side.
 
 ## Mood-to-params logic (mood.py)
 
@@ -136,13 +136,17 @@ Limiting to the first genre and capping the page range prevents empty results on
 
 **Response:** Same shape as /recommend, but returns 3 results.
 
-## Frontend (separate repo, built in Lovable)
+## Frontend (in the main job-joseph.com repo)
+
+Built as a page inside job-joseph.com (existing React app), not a separate Lovable project. File: `src/pages/Hugin.tsx`. Route: `/projects/hugin`.
 
 - **Password gate** — first screen. Single text input, matches against daily word.
 - **Primary input** — large free-text mood box. Quick-fill mood chips below (e.g. "cozy rainy day", "intense thriller") as shortcuts, not replacements.
 - **Mobile-first** — designed for the couch use case. One thumb, portrait orientation, under 30 seconds from open to first pick.
-- **Solo mode** — 5 movie cards (4 standard + 1 gem). Poster, title, tagline, ratings, runtime.
+- **Solo mode** — 5 movie cards (4 standard + 1 gem). Poster, title, year, genres, runtime, IMDb rating, RT score, hidden gem badge.
 - **Group mode** — up to 3 people enter moods on the same screen, then 3 shared picks.
-- **Dark cinematic aesthetic** — matches the movie context. No bright whites.
+- **Design** — follows existing site conventions (Plus Jakarta Sans, teal primary, orange accent, dark mode).
 - **Skeleton loading states** — not spinners. Cards render as grey shapes that fill in.
 - **"Try again"** — re-queries the API. Uses page randomization for freshness.
+- **API target** — calls https://hugin-5i4y.onrender.com directly.
+- **Seed handling** — `VITE_HUGIN_SEED` is hardcoded in Hugin.tsx because Lovable personal plan does not support build secrets.

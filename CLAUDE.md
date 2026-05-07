@@ -11,10 +11,11 @@ Named after Odin's raven — the all-seeing messenger who flies the world
 and reports back. Trusted, perceptive, personal.
 
 ## How it fits into job-joseph.com
-- Lives at job-joseph.com/projects/hugin (card in the projects page)
+- Lives at job-joseph.com/projects/hugin (page in the main site repo)
 - The backend (this repo) is standalone — separate from the main site repo
-- The frontend will be built separately in Lovable and linked from the
-  projects page, same pattern as the Word Translator project
+- Frontend is built as a page inside the main job-joseph.com React app
+  (src/pages/Hugin.tsx), NOT a separate Lovable project
+- Project card added to src/pages/Projects.tsx in the main site repo
 - Future: may redirect to hugin.job-joseph.com via DNS CNAME
 
 ## Architecture decisions
@@ -24,7 +25,9 @@ and reports back. Trusted, perceptive, personal.
   → index into WORD_LIST → today's word. Rotates at UTC midnight.
   The seed lives only in .env (gitignored) and Job's memory/password manager.
   The API never exposes the plain password — only a hash for frontend comparison.
-- Claude API is the mood interpreter — free-text in, TMDb params out (JSON)
+- Claude API is the mood interpreter — free-text in, TMDb params out (JSON).
+  Uses Haiku 4.5 (claude-haiku-4-5-20251001) — mood interpretation is a
+  lightweight structured extraction task that doesn't require Sonnet.
 - TMDb is the primary data source (Discover endpoint)
 - OMDb is the enrichment layer (RT score, IMDb rating) via shared imdb_id
 - All external calls are async (httpx). TMDb detail calls are sequential
@@ -37,7 +40,7 @@ hugin/
 ├── mood.py              ← Claude API calls (interpret_mood, interpret_group_mood)
 ├── tmdb.py              ← TMDb Discover + movie detail
 ├── omdb.py              ← OMDb enrichment by imdb_id
-├── password.py          ← Deterministic daily password logic
+├── password.py          ← Deterministic daily password logic (run: python password.py)
 ├── requirements.txt
 ├── .env                 ← Gitignored. Contains all API keys + HUGIN_SEED
 ├── .gitignore
@@ -46,6 +49,7 @@ hugin/
 ├── SPEC.md
 ├── ROADMAP.md
 ├── LEARNINGS.md
+├── render.yaml          ← Render deployment config
 └── CONTRIBUTING.md
 
 ## API endpoints
@@ -96,8 +100,14 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 ## Key logic — password (password.py)
 - get_today_password() → plain word, for Job's local use only, NEVER via API
 - get_today_hash() → short hash prefix, safe to expose via /password-hash
-- Frontend independently derives the word using the same seed (stored in
-  frontend env) and compares against user input
+- To get today's password locally: `python password.py` from the hugin/
+  directory. This calls load_dotenv() before reading HUGIN_SEED.
+  DO NOT use `python -c "from password import ..."` — that skips
+  load_dotenv() and silently falls back to "default-seed", producing
+  the wrong password.
+- Frontend independently derives the word using the same seed (hardcoded
+  in Hugin.tsx — Lovable personal plan does not support build secrets)
+  and compares against user input
 - WORD_LIST has 30 evocative single words (ember, dusk, reel, etc.)
 
 ## Pain points this solves
@@ -121,26 +131,48 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 - Other projects: Word Translator (same FastAPI pattern), Freekick Shootout
   (in main site repo), Voyager (meeting intelligence), call analysis pipeline
 
-## Frontend (not in this repo)
-- Will be built in Lovable separately
-- React app, dark cinematic aesthetic
-- Primary input: large free-text mood box, quick-fill chips below
-- Mobile-first — couch use case, one thumb, under 30 seconds start to pick
-- Password gate screen before anything else
+## Frontend (in the main job-joseph.com repo)
+- Built as a page inside job-joseph.com (existing React site), NOT a
+  separate Lovable project
+- File: src/pages/Hugin.tsx in the main site repo
+- Route: /projects/hugin
+- Project card added to src/pages/Projects.tsx
+- Design follows existing site conventions (Plus Jakarta Sans, teal
+  primary, orange accent, dark mode)
+- VITE_HUGIN_SEED is hardcoded directly in Hugin.tsx (Lovable personal
+  plan does not support build secrets)
+- Password gate working — single text input, matches against daily word
+- Movie cards render: poster, title, year, genres, runtime, IMDb rating,
+  RT score, hidden gem badge
 - Solo mode: 5 cards (4 standard + 1 gem)
 - Group mode: up to 3 people enter moods → 3 shared picks
-- Skeleton loading states, not spinners
-- "Try again" re-queries with page+1
+- Mobile-first — couch use case, one thumb, under 30 seconds start to pick
+- API calls go directly to https://hugin-5i4y.onrender.com
+
+## Known issues
+- **CORS wide open** — main.py currently has `allow_origins=["*"]`.
+  Needs to be locked to `["https://job-joseph.com"]`. Not yet done.
 
 ## Build sequence
 1. ✅ Repo created, files scaffolded
 2. ✅ Test /recommend locally with curl
 3. ✅ Test /recommend-group locally
 4. ✅ Confirm password logic works across UTC midnight
-5. [ ] Deploy backend (Railway or Render — same as Word Translator)
-6. [ ] Build frontend in Lovable, point at live API URL
-7. [ ] Add project card to job-joseph.com/projects
-8. [ ] Optional: custom domain hugin.job-joseph.com
+5. ✅ Deploy backend to Render (free tier) — https://hugin-5i4y.onrender.com
+6. ✅ Build frontend as page in job-joseph.com (src/pages/Hugin.tsx)
+7. ✅ Add project card to job-joseph.com/projects (src/pages/Projects.tsx)
+8. [ ] Lock CORS to job-joseph.com
+9. [ ] Behind the Build page at /projects/behind-the-build/hugin
+10. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
+11. [ ] Optional: custom domain hugin.job-joseph.com
+
+## Deployment
+- Hosted on Render (free tier)
+- Live URL: https://hugin-5i4y.onrender.com
+- Config: render.yaml in repo root
+- Health check: GET / returns `{"status": "Hugin is watching"}`
+- Env vars (TMDB_API_KEY, OMDB_API_KEY, ANTHROPIC_API_KEY, HUGIN_SEED)
+  set in Render dashboard, not in render.yaml
 
 ## Bugs fixed (during initial build)
 1. **Missing load_dotenv** — main.py never called load_dotenv(), so all
@@ -165,3 +197,13 @@ This surfaces high-quality, low-popularity films the algorithms bury.
    call TMDb detail sequentially (reuses the shared client's keepalive
    connection), then OMDb enrichment in parallel via asyncio.gather
    (OMDb uses HTTP, no TLS pressure).
+5. **Gem mode empty results** — gem_mode stacked all genre IDs into the
+   with_genres filter, producing overly narrow queries that returned
+   zero results. Fixed by limiting with_genres to genres[0] only and
+   capping random page selection to 1–2 when gem_mode is true.
+6. **password.py silent wrong password** — calling get_today_password()
+   via `python -c` or importing without load_dotenv() caused HUGIN_SEED
+   to fall back to "default-seed", producing the wrong daily password
+   silently. Fixed by adding a CLI entrypoint (`if __name__ == "__main__"`)
+   that calls load_dotenv() before printing the password. Correct usage:
+   `python password.py` from the hugin/ directory.

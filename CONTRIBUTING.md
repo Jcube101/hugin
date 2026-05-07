@@ -31,6 +31,14 @@ You need a `.env` file with four keys:
 uvicorn main:app --reload
 ```
 
+## Getting today's password
+
+```bash
+python password.py
+```
+
+This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -c "from password import get_today_password; ..."` — that skips `load_dotenv()` and silently produces the wrong password (falls back to `"default-seed"`).
+
 ## Tests
 
 No test suite yet. For now, test manually with curl:
@@ -43,4 +51,4 @@ curl -X POST http://127.0.0.1:8000/recommend \
 
 ## Frontend
 
-The frontend lives in a separate Lovable repo and is not part of this codebase. Backend changes should not assume any specific frontend behavior beyond the API contract documented in [SPEC.md](SPEC.md).
+The frontend is a page inside the main job-joseph.com React app (`src/pages/Hugin.tsx`), not part of this codebase. Backend changes should not assume any specific frontend behavior beyond the API contract documented in [SPEC.md](SPEC.md).

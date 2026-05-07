@@ -38,3 +38,17 @@ The fix was to split the enrichment into two phases:
 This ended up being barely slower in practice. The TMDb sequential calls take advantage of HTTP keepalive, so the connection overhead after the first request is just a round trip, not a full TLS handshake. And the OMDb calls — which are the slower ones because they hit a different server — still run in parallel.
 
 The broader lesson: `asyncio.gather` everything is not always the right move. Think about what each external service can handle and whether connection reuse gives you most of the speed benefit without the concurrency risk.
+
+## The load_dotenv CLI trap (password.py)
+
+`get_today_password()` reads `HUGIN_SEED` via `os.getenv()` with a fallback to `"default-seed"`. If you call it without `load_dotenv()` first — e.g., via `python -c "from password import get_today_password; print(get_today_password())"` — the `.env` file is never loaded, `os.getenv("HUGIN_SEED")` returns `None`, and the function silently falls back to `"default-seed"`. The password it produces is valid but wrong — it doesn't match what the frontend expects, because the frontend uses the real seed.
+
+This failed silently because the fallback is by design (so the code doesn't crash without a seed), but it means wrong passwords with no error message.
+
+The fix was adding a `if __name__ == "__main__"` block at the bottom of `password.py` that calls `load_dotenv()` before printing the password. The correct way to get today's password is now:
+
+```bash
+python password.py
+```
+
+The broader lesson: any Python script that reads from `.env` needs `load_dotenv()` called before the read — and if the function has a silent fallback default, you won't know it's missing until the output is wrong. For CLI entrypoints that read env vars, always gate `load_dotenv()` behind `__main__` so it works both as an import (where the caller is responsible for dotenv) and as a standalone script.
