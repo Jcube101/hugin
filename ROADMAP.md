@@ -15,10 +15,14 @@
 - **Backend deployed to Render** (free tier) — https://hugin-5i4y.onrender.com
 - **Frontend built** as a page inside job-joseph.com (src/pages/Hugin.tsx), not a separate Lovable project. Password gate, free-text mood input, movie cards with poster/title/year/genres/runtime/ratings/gem badge. Solo and group mode both working.
 - **Project card added** to job-joseph.com/projects (src/pages/Projects.tsx)
+- **CORS locked** to job-joseph.com + localhost:5173 (dev only)
+- **Input validation** — mood min 1 / max 500 chars, group moods capped at 4
+- **Rate limiting** via slowapi — /recommend 10/min, /recommend-group 5/min per IP
+- **Global error handler** — unhandled exceptions return generic 500, no stack traces
+- **Group mode abuse cap** — moods array limited to 4 via Pydantic validation
 
 ## Next
 
-- **Lock CORS** — main.py currently has `allow_origins=["*"]`. Lock to `["https://job-joseph.com"]`.
 - **Behind the Build page** — at /projects/behind-the-build/hugin, documenting the project's story and decisions.
 - **GitHub profile card** — add Hugin to the GitHub profile README (Jcube101/Jcube101).
 - **Custom domain** (optional) — hugin.job-joseph.com via DNS CNAME to Render.
@@ -65,13 +69,13 @@ is needed before this is considered production-hardened.
   unbounded arrays are a cost vector
 
 ### Tests to run before Behind the Build page goes live
-- [ ] Rate limit returns 429 after threshold
-- [ ] Empty mood returns 400 not 500
-- [ ] Mood > 500 chars returns 400
-- [ ] Malformed JSON returns 422
-- [ ] Group moods array > 4 is rejected
-- [ ] CORS rejects requests from non job-joseph.com origins
-- [ ] No API keys or stack traces in any error response
+- [x] Rate limit returns 429 after threshold
+- [x] Empty mood returns 422 not 500
+- [x] Mood > 500 chars returns 422
+- [x] Malformed JSON returns 422
+- [x] Group moods array > 4 is rejected
+- [x] CORS rejects requests from non job-joseph.com origins
+- [x] No API keys or stack traces in any error response
 - [ ] OMDb daily limit has a protection mechanism
 - [ ] python password.py returns correct word after 5:30 AM IST
 

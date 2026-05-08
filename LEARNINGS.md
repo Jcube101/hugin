@@ -52,3 +52,13 @@ python password.py
 ```
 
 The broader lesson: any Python script that reads from `.env` needs `load_dotenv()` called before the read — and if the function has a silent fallback default, you won't know it's missing until the output is wrong. For CLI entrypoints that read env vars, always gate `load_dotenv()` behind `__main__` so it works both as an import (where the caller is responsible for dotenv) and as a standalone script.
+
+## Global exception handlers eat everything (including validation)
+
+FastAPI has built-in handlers for `RequestValidationError` (422) and `HTTPException`. When I added a global `@app.exception_handler(Exception)` to catch unhandled errors and return a generic 500 message, it intercepted *everything* — including Pydantic validation failures. Empty mood strings that should have returned 422 were getting swallowed into a generic 500.
+
+The fix was adding an isinstance check at the top of the global handler to re-raise exceptions that FastAPI already knows how to handle: `HTTPException`, `RequestValidationError`, and `RateLimitExceeded`. Only truly unexpected exceptions (network failures, bad API responses, bugs) fall through to the generic message.
+
+The lesson: a global exception handler in FastAPI is a catch-all in the literal sense. If you want it to coexist with FastAPI's built-in error handling, you need to explicitly exclude the exception types that already have handlers. The alternative is registering handlers for specific exception types instead of the base `Exception` class, but that requires knowing every possible unhandled exception in advance — the isinstance re-raise pattern is more defensive.
+
+The broader point: stack traces should never reach the client in a production API. They leak internal paths, library versions, and sometimes env var names. A global handler is the last line of defense, but it needs to be surgically scoped so it doesn't break the framework's own error semantics.

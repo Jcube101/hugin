@@ -1,10 +1,15 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from pydantic import BaseModel, Field
+from typing import List, Annotated
 import asyncio
 
 from mood import interpret_mood, interpret_group_mood
@@ -12,24 +17,30 @@ from tmdb import discover_movies, get_movie_detail
 from omdb import enrich_with_omdb
 from password import get_today_hash
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Hugin API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # lock this down once frontend URL is known
+    allow_origins=[
+        "https://job-joseph.com",
+        "http://localhost:5173",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 class MoodRequest(BaseModel):
-    mood: str
-    original_language: str | None = None
+    mood: str = Field(min_length=1, max_length=500)
+    original_language: str | None = Field(default=None, max_length=10)
     exclude_animation: bool = False
     min_year: int | None = None
 
 class GroupMoodRequest(BaseModel):
-    moods: List[str]
-    original_language: str | None = None
+    moods: List[Annotated[str, Field(min_length=1, max_length=500)]] = Field(max_length=4)
+    original_language: str | None = Field(default=None, max_length=10)
     exclude_animation: bool = False
     min_year: int | None = None
 
@@ -43,7 +54,8 @@ def password_hash():
     return {"hash": get_today_hash()}
 
 @app.post("/recommend")
-async def recommend(req: MoodRequest):
+@limiter.limit("10/minute")
+async def recommend(request: Request, req: MoodRequest):
     params = await interpret_mood(req.mood)
     filters = {
         "original_language": req.original_language,
@@ -55,7 +67,8 @@ async def recommend(req: MoodRequest):
     return {"results": enriched, "params_used": params}
 
 @app.post("/recommend-group")
-async def recommend_group(req: GroupMoodRequest):
+@limiter.limit("5/minute")
+async def recommend_group(request: Request, req: GroupMoodRequest):
     params = await interpret_group_mood(req.moods)
     filters = {
         "original_language": req.original_language,
@@ -65,6 +78,15 @@ async def recommend_group(req: GroupMoodRequest):
     movies = await discover_movies(params, limit=3, filters=filters)
     enriched = await enrich_all(movies)
     return {"results": enriched, "params_used": params}
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, (HTTPException, RequestValidationError, RateLimitExceeded)):
+        raise exc
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Something went wrong. Please try again."}
+    )
 
 async def enrich_all(movies: list) -> list:
     details = []

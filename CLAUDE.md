@@ -158,9 +158,20 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 - Mobile-first — couch use case, one thumb, under 30 seconds start to pick
 - API calls go directly to https://hugin-5i4y.onrender.com
 
-## Known issues
-- **CORS wide open** — main.py currently has `allow_origins=["*"]`.
-  Needs to be locked to `["https://job-joseph.com"]`. Not yet done.
+## Security
+- **CORS** — locked to `["https://job-joseph.com", "http://localhost:5173"]`.
+  The localhost entry is for local frontend dev only.
+- **Rate limiting** — slowapi with per-IP limits:
+  /recommend: 10 requests/minute, /recommend-group: 5 requests/minute.
+  Group endpoint is stricter because each mood hits the Claude API.
+- **Input validation** — Pydantic Field() constraints:
+  mood: min 1, max 500 chars. Group moods: max 4 items, each max 500 chars.
+  original_language: max 10 chars if provided.
+- **Global error handler** — unhandled exceptions return
+  `{"error": "Something went wrong. Please try again."}` with status 500.
+  No stack traces, API keys, or internal details leak to the client.
+  FastAPI's built-in handlers for validation (422) and rate limits (429)
+  are preserved.
 
 ## Build sequence
 1. ✅ Repo created, files scaffolded
@@ -170,10 +181,11 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 5. ✅ Deploy backend to Render (free tier) — https://hugin-5i4y.onrender.com
 6. ✅ Build frontend as page in job-joseph.com (src/pages/Hugin.tsx)
 7. ✅ Add project card to job-joseph.com/projects (src/pages/Projects.tsx)
-8. [ ] Lock CORS to job-joseph.com
-9. [ ] Behind the Build page at /projects/behind-the-build/hugin
-10. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
-11. [ ] Optional: custom domain hugin.job-joseph.com
+8. ✅ Lock CORS to job-joseph.com + localhost:5173
+9. ✅ Input validation, rate limiting, global error handler
+10. [ ] Behind the Build page at /projects/behind-the-build/hugin
+11. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
+12. [ ] Optional: custom domain hugin.job-joseph.com
 
 ## Deployment
 - Hosted on Render (free tier)
