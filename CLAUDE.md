@@ -66,12 +66,13 @@ hugin/
 - POST /recommend          → {mood: str, ...filters} → 5 enriched movie objects
 - POST /recommend-group    → {moods: str[], ...filters} → 3 enriched movie objects
 
-### Optional filter fields (both endpoints)
+### Optional fields (both endpoints)
 - original_language: ISO 639-1 code string or null (e.g. "ko", "hi")
 - exclude_animation: boolean, default false
 - min_year: integer year or null (e.g. 2010)
+- page: integer or null — explicit TMDb page number for "try again" cycling
 
-All filter fields are optional — omitting them produces identical
+All optional fields are optional — omitting them produces identical
 behaviour to before. Filters pass directly to TMDb Discover parameters,
 bypassing Claude's mood interpretation.
 
@@ -99,7 +100,7 @@ interpreter. It returns ONLY a JSON object with:
 - genres: TMDb genre IDs (integers)
 - keywords: keyword strings
 - vote_floor: float (5.5–8.0)
-- gem_mode: boolean (true = high vote_average, low vote_count filter)
+- gem_mode: boolean (true ONLY for explicit hidden/obscure/underrated requests, not mood words like "dark" or "tense")
 - sort_by: "vote_average.desc" or "popularity.desc"
 
 Group mode sends all moods together and asks Claude to find the
@@ -111,8 +112,17 @@ When gem_mode is true:
 - vote_average.gte = 7.5
 - sort_by = vote_average.desc
 - with_genres limited to the first genre ID only (widens the result pool)
-- random page capped at 2 instead of 3 (avoids empty pages on smaller sets)
+- page capped at 1–2 (avoids empty pages on smaller sets)
+- If gem_mode returns zero results, retries once with gem_mode disabled
+  and page=1 as a fallback (ensures the user always gets recommendations)
 This surfaces high-quality, low-popularity films the algorithms bury.
+
+## Key logic — page capping (tmdb.py)
+When filters are active (original_language, exclude_animation, or min_year)
+OR gem_mode is true, pages are capped to 1–2 to avoid requesting pages
+beyond the smaller filtered result set. Without filters, pages range 1–5
+for more variety. An explicit page parameter (from "try again") is also
+capped to 2 when filters/gem are active.
 
 ## Key logic — password (password.py)
 - get_today_password() → plain word, for Job's local use only, NEVER via API
@@ -167,8 +177,8 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 - API calls go directly to https://hugin-5i4y.onrender.com
 
 ## Security
-- **CORS** — locked to `["https://job-joseph.com", "http://localhost:5173"]`.
-  The localhost entry is for local frontend dev only.
+- **CORS** — locked to `["https://job-joseph.com", "https://preview--job-joseph.lovable.app", "http://localhost:5173"]`.
+  The Lovable preview and localhost entries are for dev/preview only.
 - **Rate limiting** — slowapi with per-IP limits:
   /recommend: 10 requests/minute, /recommend-group: 5 requests/minute.
   Group endpoint is stricter because each mood hits the Claude API.

@@ -51,7 +51,7 @@ Claude receives a system prompt defining it as Hugin, a movie mood interpreter. 
 | genres | int[] | TMDb genre IDs (e.g. 35 for Comedy) |
 | keywords | string[] | TMDb keyword strings, 2-4 words each |
 | vote_floor | float | Minimum vote average, range 5.5-8.0 |
-| gem_mode | boolean | True if mood suggests niche/underrated |
+| gem_mode | boolean | True ONLY for explicit hidden/obscure/underrated requests — not mood words like "dark" or "tense" |
 | sort_by | string | "vote_average.desc" or "popularity.desc" |
 
 The response is hardened by `_parse_response()`:
@@ -73,9 +73,9 @@ When `gem_mode` is true, the TMDb Discover query changes:
 | vote_average.gte | vote_floor | 7.5 |
 | sort_by | from params | vote_average.desc |
 | with_genres | all genre IDs | first genre ID only |
-| random page | 1-3 | 1-2 |
+| page range | 1-5 | 1-2 |
 
-Limiting to the first genre and capping the page range prevents empty results on smaller result pools.
+Limiting to the first genre and capping the page range prevents empty results on smaller result pools. Pages are also capped to 1–2 when any filter is active (original_language, exclude_animation, or min_year). If gem_mode returns zero results, a fallback retry runs with gem_mode disabled and page=1.
 
 ## Endpoint contracts
 
@@ -99,8 +99,9 @@ Limiting to the first genre and capping the page range prevents empty results on
 - `original_language`: ISO 639-1 code (e.g. "en", "hi", "ko") or null
 - `exclude_animation`: boolean, default false — adds `without_genres=16`
 - `min_year`: integer year or null — adds `primary_release_date.gte`
+- `page`: integer or null — explicit TMDb result page for "try again" cycling
 
-All filter fields are optional. Omitting them produces identical behaviour
+All optional fields are optional. Omitting them produces identical behaviour
 to before. Filters pass directly to TMDb Discover, bypassing Claude.
 
 **Response:**

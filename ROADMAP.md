@@ -23,6 +23,11 @@
 - **Advanced filters** (Phase 1) — original language, exclude animation, min year (backend + frontend)
 - **Pytest test suite** — 79 tests across 5 files, all external APIs mocked
 - **OMDb daily limit protection** — in-memory counter (950/day cap), resets at UTC midnight, exposed via GET /health
+- **CORS updated** — added Lovable preview URL (preview--job-joseph.lovable.app)
+- **Page parameter** — optional `page` field on both endpoints for "try again" cycling
+- **Page capping** — filters or gem_mode cap pages to 1–2; otherwise 1–5
+- **Gem fallback** — if gem_mode returns empty results, retries with gem_mode disabled
+- **gem_mode prompt tightened** — only triggers for explicit hidden/obscure/underrated requests, not mood words
 
 ## Next
 
@@ -47,8 +52,8 @@ is needed before this is considered production-hardened.
 - Empty mood → 422, oversized → 422, malformed JSON → 422
 
 ### CORS lockdown (high priority) ✅
-- Locked to `["https://job-joseph.com", "http://localhost:5173"]`
-- localhost:5173 entry is for local frontend dev only
+- Locked to `["https://job-joseph.com", "https://preview--job-joseph.lovable.app", "http://localhost:5173"]`
+- Lovable preview and localhost entries are for dev/preview only
 
 ### Cost protection (medium priority) ✅
 - In-memory daily call counter in omdb.py (cap: 950, resets at UTC midnight)
@@ -82,7 +87,7 @@ is needed before this is considered production-hardened.
 ## Later / maybe
 
 - **Streaming provider filter** — use TMDb's `watch/providers` endpoint to filter by where the user can actually watch (Netflix, Prime, etc.). Would require a provider selector in the frontend.
-- **Try again page cycling** — properly cycle through TMDb result pages on re-query instead of random page selection.
+- **Try again page cycling** — ✅ optional `page` parameter added to both endpoints; frontend can pass explicit page numbers on re-query.
 - **Watchlist via localStorage** — let users save picks to a local watchlist without needing a database. Persists in the browser, exportable as a list.
 - **Director/actor mood inputs** — extend the mood interpreter to handle inputs like "something by Denis Villeneuve" or "anything with Florence Pugh." Would add TMDb person search to the pipeline.
 - **Shareable pick links** — generate a short URL or encoded query string that recreates a specific set of results, so users can text a friend "here's what Hugin picked for us."

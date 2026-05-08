@@ -95,7 +95,7 @@ curl http://127.0.0.1:8000/password-hash
 
 ### POST /recommend
 
-Solo mode. Send a mood description (1–500 chars), get 5 enriched movie picks. Optional filters: `original_language` (ISO 639-1 code), `exclude_animation` (boolean), `min_year` (integer).
+Solo mode. Send a mood description (1–500 chars), get 5 enriched movie picks. Optional filters: `original_language` (ISO 639-1 code), `exclude_animation` (boolean), `min_year` (integer), `page` (integer, for cycling through result pages on "try again").
 
 ```bash
 curl -X POST http://127.0.0.1:8000/recommend \
@@ -146,7 +146,7 @@ curl -X POST http://127.0.0.1:8000/recommend \
 
 ### POST /recommend-group
 
-Group mode. Send 1–4 moods (each 1–500 chars), get 3 shared picks. Same optional filters apply.
+Group mode. Send 1–4 moods (each 1–500 chars), get 3 shared picks. Same optional filters and `page` parameter apply.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/recommend-group \
