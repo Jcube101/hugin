@@ -18,7 +18,7 @@ Given a mood description, return ONLY a valid JSON object with:
 - genres: array of TMDb genre IDs as integers (e.g. [35, 18], NOT strings)
 - keywords: array of TMDb keyword strings (2-4 words max each)
 - vote_floor: float between 5.5 and 8.0
-- gem_mode: boolean (true if mood suggests niche/unusual/underrated)
+- gem_mode: boolean — set to true ONLY when the user explicitly asks for hidden, obscure, underrated, or unknown films. Do NOT set gem_mode for mood descriptions like 'mind bending', 'psychological', 'tense', or 'dark' — these are moods, not requests for obscure films.
 - sort_by: exactly one of "vote_average.desc" or "popularity.desc"
 
 TMDb genre IDs reference:

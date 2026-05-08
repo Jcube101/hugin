@@ -20,10 +20,21 @@ async def discover_movies(params: dict, limit: int = 5, filters: dict = {}, page
     gem = params.get("gem_mode")
     genres = params.get("genres", [])
 
+    has_filters = (
+        filters.get("original_language") or
+        filters.get("exclude_animation") or
+        filters.get("min_year")
+    )
+
+    if has_filters or gem:
+        effective_page = min(page, 2) if page else random.randint(1, 2)
+    else:
+        effective_page = page if page else random.randint(1, 5)
+
     query = {
         "api_key": api_key,
         "language": "en-US",
-        "page": page if page is not None else random.randint(1, 2 if gem else 5),
+        "page": effective_page,
         "sort_by": params.get("sort_by", "vote_average.desc"),
         "vote_count.gte": 50,
         "vote_average.gte": params.get("vote_floor", 6.5),
@@ -46,8 +57,23 @@ async def discover_movies(params: dict, limit: int = 5, filters: dict = {}, page
 
     r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query)
     r.raise_for_status()
-    results = r.json().get("results", [])
-    return results[:limit]
+    results = r.json().get("results", [])[:limit]
+
+    if not results and params.get("gem_mode"):
+        params["gem_mode"] = False
+        query.pop("vote_count.lte", None)
+        query["vote_average.gte"] = params.get("vote_floor", 6.5)
+        query["with_genres"] = ",".join(
+            str(g) for g in params.get("genres", [])
+        )
+        query["page"] = 1
+        r = await _get_client().get(
+            f"{TMDB_BASE}/discover/movie", params=query
+        )
+        r.raise_for_status()
+        results = r.json().get("results", [])[:limit]
+
+    return results
 
 async def get_movie_detail(movie_id: int) -> dict:
     api_key = os.getenv("TMDB_API_KEY")
