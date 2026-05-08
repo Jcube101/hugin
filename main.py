@@ -38,12 +38,14 @@ class MoodRequest(BaseModel):
     original_language: str | None = Field(default=None, max_length=10)
     exclude_animation: bool = False
     min_year: int | None = None
+    page: int | None = None
 
 class GroupMoodRequest(BaseModel):
     moods: List[Annotated[str, Field(min_length=1, max_length=500)]] = Field(min_length=1, max_length=4)
     original_language: str | None = Field(default=None, max_length=10)
     exclude_animation: bool = False
     min_year: int | None = None
+    page: int | None = None
 
 @app.get("/")
 def root():
@@ -67,7 +69,7 @@ async def recommend(request: Request, req: MoodRequest):
         "exclude_animation": req.exclude_animation,
         "min_year": req.min_year,
     }
-    movies = await discover_movies(params, filters=filters)
+    movies = await discover_movies(params, filters=filters, page=req.page)
     enriched = await enrich_all(movies)
     return {"results": enriched, "params_used": params}
 
@@ -80,7 +82,7 @@ async def recommend_group(request: Request, req: GroupMoodRequest):
         "exclude_animation": req.exclude_animation,
         "min_year": req.min_year,
     }
-    movies = await discover_movies(params, limit=3, filters=filters)
+    movies = await discover_movies(params, limit=3, filters=filters, page=req.page)
     enriched = await enrich_all(movies)
     return {"results": enriched, "params_used": params}
 

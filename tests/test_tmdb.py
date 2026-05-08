@@ -234,7 +234,7 @@ class TestDiscoverMovies:
             for _ in range(50):
                 await discover_movies({"genres": [35], "sort_by": "popularity.desc"})
 
-        assert pages_seen.issubset({1, 2, 3})
+        assert pages_seen.issubset({1, 2, 3, 4, 5})
         assert len(pages_seen) >= 2
 
     @pytest.mark.asyncio

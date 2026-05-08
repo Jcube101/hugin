@@ -15,7 +15,7 @@ def _get_client() -> httpx.AsyncClient:
         )
     return _client
 
-async def discover_movies(params: dict, limit: int = 5, filters: dict = {}) -> list:
+async def discover_movies(params: dict, limit: int = 5, filters: dict = {}, page: int | None = None) -> list:
     api_key = os.getenv("TMDB_API_KEY")
     gem = params.get("gem_mode")
     genres = params.get("genres", [])
@@ -23,7 +23,7 @@ async def discover_movies(params: dict, limit: int = 5, filters: dict = {}) -> l
     query = {
         "api_key": api_key,
         "language": "en-US",
-        "page": random.randint(1, 2 if gem else 3),
+        "page": page if page is not None else random.randint(1, 2 if gem else 5),
         "sort_by": params.get("sort_by", "vote_average.desc"),
         "vote_count.gte": 50,
         "vote_average.gte": params.get("vote_floor", 6.5),
