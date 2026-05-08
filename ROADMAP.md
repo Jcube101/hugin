@@ -82,3 +82,60 @@ is needed before this is considered production-hardened.
 - **Watchlist via localStorage** — let users save picks to a local watchlist without needing a database. Persists in the browser, exportable as a list.
 - **Director/actor mood inputs** — extend the mood interpreter to handle inputs like "something by Denis Villeneuve" or "anything with Florence Pugh." Would add TMDb person search to the pipeline.
 - **Shareable pick links** — generate a short URL or encoded query string that recreates a specific set of results, so users can text a friend "here's what Hugin picked for us."
+
+## Advanced Filters
+
+Allow users to optionally refine results beyond mood. All filters
+are additive — mood interpretation remains the primary input.
+Filters pass directly to TMDb Discover parameters, bypassing Claude.
+
+### Phase 1 — High value, low complexity (build next)
+
+**Original language filter**
+- Frontend: a dropdown with common options:
+  Any (default), English, Hindi, Korean, Japanese, French, Spanish, Tamil
+- Backend: adds with_original_language=XX to TMDb Discover query
+- MoodRequest and GroupMoodRequest models: add optional
+  original_language: str = None field
+- tmdb.py: if original_language is set, add to query params
+
+**Exclude animation toggle**
+- Frontend: a simple toggle — "Exclude animated films"
+- Backend: when true, adds without_genres=16 to TMDb Discover query
+- MoodRequest and GroupMoodRequest models: add optional
+  exclude_animation: bool = False field
+- tmdb.py: if exclude_animation is true, add without_genres=16
+
+### Phase 2 — Useful, slightly more work (build later)
+
+**Release decade filter**
+- Frontend: pill selector — Any, 2020s, 2010s, 2000s, 90s, 80s & older
+- Backend: maps to primary_release_date.gte and .lte
+- E.g. "2010s" → gte=2010-01-01, lte=2019-12-31
+
+**Minimum runtime filter**
+- Frontend: pill selector — Any, 90+ mins, 2hrs+
+- Backend: maps to with_runtime.gte (90 or 120)
+
+### Phase 3 — Complex, defer until needed
+
+**Streaming provider filter**
+- Requires TMDb watch_providers endpoint + watch_region
+- Needs a separate API call to get provider list per region
+- High complexity for a personal tool — defer
+
+### API notes
+- TMDb with_original_language accepts ISO 639-1 codes:
+  en, hi, ko, ja, fr, es, ta, te, ml, kn
+- TMDb without_genres=16 excludes ALL animation including Pixar/Ghibli
+  — should be presented as "Exclude animated films" not "No anime"
+  so the user understands the full scope
+- OMDb is enrichment only — no filters apply there
+- All filter params are optional — default behaviour unchanged
+  when no filters are set
+
+### Implementation order
+1. Update MoodRequest and GroupMoodRequest Pydantic models
+2. Update tmdb.py discover_movies() to accept and apply filter params
+3. Update Hugin.tsx frontend to show filter UI
+4. Test that filtered and unfiltered queries both return valid results
