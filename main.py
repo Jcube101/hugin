@@ -26,6 +26,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://job-joseph.com",
+        "https://preview--job-joseph.lovable.app",
         "http://localhost:5173",
     ],
     allow_methods=["*"],
