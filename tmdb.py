@@ -15,7 +15,7 @@ def _get_client() -> httpx.AsyncClient:
         )
     return _client
 
-async def discover_movies(params: dict, limit: int = 5) -> list:
+async def discover_movies(params: dict, limit: int = 5, filters: dict = {}) -> list:
     api_key = os.getenv("TMDB_API_KEY")
     gem = params.get("gem_mode")
     genres = params.get("genres", [])
@@ -33,6 +33,16 @@ async def discover_movies(params: dict, limit: int = 5) -> list:
     if gem:
         query["vote_count.lte"] = 3000
         query["vote_average.gte"] = 7.5
+
+    if filters.get("original_language"):
+        query["with_original_language"] = filters["original_language"]
+
+    if filters.get("exclude_animation"):
+        existing = query.get("without_genres", "")
+        query["without_genres"] = f"{existing},16".strip(",") if existing else "16"
+
+    if filters.get("min_year"):
+        query["primary_release_date.gte"] = f"{filters['min_year']}-01-01"
 
     r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query)
     r.raise_for_status()

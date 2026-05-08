@@ -55,8 +55,17 @@ hugin/
 ## API endpoints
 - GET  /                   → health check
 - GET  /password-hash      → returns today's SHA-256 hash prefix (not the word)
-- POST /recommend          → {mood: str} → 5 enriched movie objects
-- POST /recommend-group    → {moods: str[]} → 3 enriched movie objects
+- POST /recommend          → {mood: str, ...filters} → 5 enriched movie objects
+- POST /recommend-group    → {moods: str[], ...filters} → 3 enriched movie objects
+
+### Optional filter fields (both endpoints)
+- original_language: ISO 639-1 code string or null (e.g. "ko", "hi")
+- exclude_animation: boolean, default false
+- min_year: integer year or null (e.g. 2010)
+
+All filter fields are optional — omitting them produces identical
+behaviour to before. Filters pass directly to TMDb Discover parameters,
+bypassing Claude's mood interpretation.
 
 ## Environment variables (.env)
 TMDB_API_KEY=

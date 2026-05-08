@@ -23,9 +23,15 @@ app.add_middleware(
 
 class MoodRequest(BaseModel):
     mood: str
+    original_language: str | None = None
+    exclude_animation: bool = False
+    min_year: int | None = None
 
 class GroupMoodRequest(BaseModel):
     moods: List[str]
+    original_language: str | None = None
+    exclude_animation: bool = False
+    min_year: int | None = None
 
 @app.get("/")
 def root():
@@ -39,14 +45,24 @@ def password_hash():
 @app.post("/recommend")
 async def recommend(req: MoodRequest):
     params = await interpret_mood(req.mood)
-    movies = await discover_movies(params)
+    filters = {
+        "original_language": req.original_language,
+        "exclude_animation": req.exclude_animation,
+        "min_year": req.min_year,
+    }
+    movies = await discover_movies(params, filters=filters)
     enriched = await enrich_all(movies)
     return {"results": enriched, "params_used": params}
 
 @app.post("/recommend-group")
 async def recommend_group(req: GroupMoodRequest):
     params = await interpret_group_mood(req.moods)
-    movies = await discover_movies(params, limit=3)
+    filters = {
+        "original_language": req.original_language,
+        "exclude_animation": req.exclude_animation,
+        "min_year": req.min_year,
+    }
+    movies = await discover_movies(params, limit=3, filters=filters)
     enriched = await enrich_all(movies)
     return {"results": enriched, "params_used": params}
 
