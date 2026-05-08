@@ -20,8 +20,9 @@
 - **Rate limiting** via slowapi — /recommend 10/min, /recommend-group 5/min per IP
 - **Global error handler** — unhandled exceptions return generic 500, no stack traces
 - **Group mode abuse cap** — moods array limited to min 1 / max 4 via Pydantic validation
-- **Advanced filters** (Phase 1 backend) — original language, exclude animation, min year
-- **Pytest test suite** — 74 tests across 5 files, all external APIs mocked
+- **Advanced filters** (Phase 1) — original language, exclude animation, min year (backend + frontend)
+- **Pytest test suite** — 79 tests across 5 files, all external APIs mocked
+- **OMDb daily limit protection** — in-memory counter (950/day cap), resets at UTC midnight, exposed via GET /health
 
 ## Next
 
@@ -49,11 +50,11 @@ is needed before this is considered production-hardened.
 - Locked to `["https://job-joseph.com", "http://localhost:5173"]`
 - localhost:5173 entry is for local frontend dev only
 
-### Cost protection (medium priority)
-- OMDb free tier is 1,000 calls/day — add a daily call counter
-  or cache responses by imdb_id in memory
+### Cost protection (medium priority) ✅
+- In-memory daily call counter in omdb.py (cap: 950, resets at UTC midnight)
+- When limit reached, enrich_with_omdb returns {} — movies still show, just without RT/IMDb ratings
+- GET /health endpoint exposes today's call count, date, and limit
 - Anthropic is pay-per-use — rate limiting covers this indirectly
-- Add a /health endpoint response that shows today's OMDb call count
 
 ### API key safety (medium priority) ✅
 - Global exception handler catches unhandled errors, returns generic
@@ -75,8 +76,8 @@ is needed before this is considered production-hardened.
 - [x] Group moods array > 4 is rejected
 - [x] CORS rejects requests from non job-joseph.com origins
 - [x] No API keys or stack traces in any error response
-- [ ] OMDb daily limit has a protection mechanism
-- [ ] python password.py returns correct word after 5:30 AM IST
+- [x] OMDb daily limit has a protection mechanism
+- [x] python password.py returns correct word after 5:30 AM IST
 
 ## Later / maybe
 
@@ -92,22 +93,19 @@ Allow users to optionally refine results beyond mood. All filters
 are additive — mood interpretation remains the primary input.
 Filters pass directly to TMDb Discover parameters, bypassing Claude.
 
-### Phase 1 — High value, low complexity (backend ✅, frontend pending)
+### Phase 1 — High value, low complexity ✅
 
-**Original language filter** (backend ✅)
-- Frontend: a dropdown with common options:
-  Any (default), English, Hindi, Korean, Japanese, French, Spanish, Tamil
+**Original language filter** ✅
+- ✅ Frontend: dropdown (Any, English, Hindi, Korean, Japanese, French, Spanish, Tamil)
 - ✅ Backend: adds with_original_language=XX to TMDb Discover query
-- ✅ MoodRequest and GroupMoodRequest models: optional
-  original_language: str = None field
-- ✅ tmdb.py: if original_language is set, add to query params
 
-**Exclude animation toggle** (backend ✅)
-- Frontend: a simple toggle — "Exclude animated films"
+**Exclude animation toggle** ✅
+- ✅ Frontend: toggle — "Exclude animated films"
 - ✅ Backend: when true, adds without_genres=16 to TMDb Discover query
-- ✅ MoodRequest and GroupMoodRequest models: optional
-  exclude_animation: bool = False field
-- ✅ tmdb.py: if exclude_animation is true, add without_genres=16
+
+**Min year filter** ✅
+- ✅ Frontend: year input
+- ✅ Backend: adds primary_release_date.gte to TMDb Discover query
 
 ### Phase 2 — Useful, slightly more work (build later)
 
@@ -140,5 +138,5 @@ Filters pass directly to TMDb Discover parameters, bypassing Claude.
 ### Implementation order
 1. ✅ Update MoodRequest and GroupMoodRequest Pydantic models
 2. ✅ Update tmdb.py discover_movies() to accept and apply filter params
-3. Update Hugin.tsx frontend to show filter UI
+3. ✅ Update Hugin.tsx frontend to show filter UI
 4. ✅ Test that filtered and unfiltered queries both return valid results

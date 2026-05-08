@@ -51,7 +51,7 @@ hugin/
 ├── LEARNINGS.md
 ├── render.yaml          ← Render deployment config
 ├── CONTRIBUTING.md
-└── tests/               ← 74 tests, all external APIs mocked (pytest tests/ -v)
+└── tests/               ← 79 tests, all external APIs mocked (pytest tests/ -v)
     ├── conftest.py      ← Shared fixtures (mock movies, params, responses)
     ├── test_password.py ← Password derivation and hash tests (10 tests)
     ├── test_mood.py     ← Claude response parsing and mood interpretation (17 tests)
@@ -61,6 +61,7 @@ hugin/
 
 ## API endpoints
 - GET  /                   → health check
+- GET  /health             → OMDb daily call count, limit, and date
 - GET  /password-hash      → returns today's SHA-256 hash prefix (not the word)
 - POST /recommend          → {mood: str, ...filters} → 5 enriched movie objects
 - POST /recommend-group    → {moods: str[], ...filters} → 3 enriched movie objects
@@ -191,7 +192,7 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 8. ✅ Lock CORS to job-joseph.com + localhost:5173
 9. ✅ Input validation, rate limiting, global error handler
 10. ✅ Advanced filters (language, exclude animation, min year)
-11. ✅ Pytest test suite (74 tests, all external APIs mocked)
+11. ✅ Pytest test suite (79 tests, all external APIs mocked)
 12. [ ] Behind the Build page at /projects/behind-the-build/hugin
 13. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
 14. [ ] Optional: custom domain hugin.job-joseph.com

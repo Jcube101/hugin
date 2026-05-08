@@ -14,7 +14,7 @@ import asyncio
 
 from mood import interpret_mood, interpret_group_mood
 from tmdb import discover_movies, get_movie_detail
-from omdb import enrich_with_omdb
+from omdb import enrich_with_omdb, get_omdb_call_count
 from password import get_today_hash
 
 limiter = Limiter(key_func=get_remote_address)
@@ -47,6 +47,10 @@ class GroupMoodRequest(BaseModel):
 @app.get("/")
 def root():
     return {"status": "Hugin is watching"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "omdb": get_omdb_call_count()}
 
 @app.get("/password-hash")
 def password_hash():

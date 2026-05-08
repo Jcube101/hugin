@@ -82,6 +82,18 @@ class TestHealthCheck:
         assert r.json() == {"status": "Hugin is watching"}
 
 
+class TestHealthEndpoint:
+
+    def test_health_returns_omdb_stats(self, client):
+        r = client.get("/health")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "ok"
+        assert "omdb" in data
+        assert "calls" in data["omdb"]
+        assert "limit" in data["omdb"]
+
+
 class TestPasswordHash:
 
     def test_returns_hash(self, client):

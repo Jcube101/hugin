@@ -10,7 +10,7 @@ Hugin is a mood-based movie recommendation API. You describe how you feel in fre
 - **OMDb API** — Rotten Tomatoes scores, IMDb ratings, content ratings
 - **httpx** — async HTTP client with connection pooling
 - **slowapi** — rate limiting (10/min solo, 5/min group per IP)
-- **pytest** / **pytest-asyncio** — 74 tests, all external APIs mocked
+- **pytest** / **pytest-asyncio** — 79 tests, all external APIs mocked
 
 ## Live deployment
 
@@ -67,6 +67,18 @@ curl http://127.0.0.1:8000/
 
 ```json
 {"status": "Hugin is watching"}
+```
+
+### GET /health
+
+Returns OMDb daily call count, limit, and date. Useful for monitoring cost protection.
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+```json
+{"status": "ok", "omdb": {"date": "2026-05-08", "calls": 42, "limit": 950}}
 ```
 
 ### GET /password-hash
