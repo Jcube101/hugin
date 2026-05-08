@@ -16,10 +16,12 @@
 - **Frontend built** as a page inside job-joseph.com (src/pages/Hugin.tsx), not a separate Lovable project. Password gate, free-text mood input, movie cards with poster/title/year/genres/runtime/ratings/gem badge. Solo and group mode both working.
 - **Project card added** to job-joseph.com/projects (src/pages/Projects.tsx)
 - **CORS locked** to job-joseph.com + localhost:5173 (dev only)
-- **Input validation** — mood min 1 / max 500 chars, group moods capped at 4
+- **Input validation** — mood min 1 / max 500 chars, group moods min 1 / max 4, each max 500 chars
 - **Rate limiting** via slowapi — /recommend 10/min, /recommend-group 5/min per IP
 - **Global error handler** — unhandled exceptions return generic 500, no stack traces
-- **Group mode abuse cap** — moods array limited to 4 via Pydantic validation
+- **Group mode abuse cap** — moods array limited to min 1 / max 4 via Pydantic validation
+- **Advanced filters** (Phase 1 backend) — original language, exclude animation, min year
+- **Pytest test suite** — 74 tests across 5 files, all external APIs mocked
 
 ## Next
 
@@ -33,23 +35,19 @@ The password gate exists only in the frontend — the backend API is
 publicly accessible to anyone who knows the URL. The following work
 is needed before this is considered production-hardened.
 
-### Rate limiting (high priority)
-- Add slowapi to the backend (same pattern as Word Translator)
-- Limit /recommend and /recommend-group to 10 requests per minute per IP
-- Limit /recommend-group specifically to prevent Claude API abuse
-- Test: hammer the endpoint in a loop and confirm 429 is returned
+### Rate limiting (high priority) ✅
+- slowapi added — /recommend: 10/min, /recommend-group: 5/min per IP
+- Group endpoint stricter because each mood hits Claude API
+- Tested: 429 returned after threshold
 
-### Input validation (high priority)
-- Test empty mood string — confirm graceful error not 500
-- Test mood string over 500 characters — should be rejected with 400
-- Test malformed JSON body — confirm FastAPI handles cleanly
-- Test /recommend-group with moods array longer than 4 — should be capped
-- Add max_length validation to MoodRequest and GroupMoodRequest models
+### Input validation (high priority) ✅
+- Pydantic Field() constraints on MoodRequest and GroupMoodRequest
+- mood: min 1, max 500 chars. Group moods: min 1, max 4 items, each max 500 chars
+- Empty mood → 422, oversized → 422, malformed JSON → 422
 
-### CORS lockdown (high priority)
-- Change allow_origins=["*"] to allow_origins=["https://job-joseph.com"]
-- Test that direct curl calls from other origins are rejected
-- Test that the frontend still works after the change
+### CORS lockdown (high priority) ✅
+- Locked to `["https://job-joseph.com", "http://localhost:5173"]`
+- localhost:5173 entry is for local frontend dev only
 
 ### Cost protection (medium priority)
 - OMDb free tier is 1,000 calls/day — add a daily call counter
@@ -57,16 +55,17 @@ is needed before this is considered production-hardened.
 - Anthropic is pay-per-use — rate limiting covers this indirectly
 - Add a /health endpoint response that shows today's OMDb call count
 
-### API key safety (medium priority)
-- Audit all error responses — confirm no stack traces leak to client
-- Add a global exception handler in main.py that returns generic
-  500 messages without internal details
-- Test what a deliberate crash returns to the caller
+### API key safety (medium priority) ✅
+- Global exception handler catches unhandled errors, returns generic
+  `{"error": "Something went wrong. Please try again."}` with 500
+- Re-raises HTTPException, RequestValidationError, RateLimitExceeded
+  so FastAPI's built-in handlers still work
+- Tested: deliberate crash returns generic message, no stack traces
 
-### Group mode abuse prevention (medium priority)
-- Cap moods array at 4 in GroupMoodRequest Pydantic model
-- Each mood triggers a Claude API call in the interpreter —
-  unbounded arrays are a cost vector
+### Group mode abuse prevention (medium priority) ✅
+- moods array: min_length=1, max_length=4 in GroupMoodRequest
+- Each individual mood: min 1, max 500 chars
+- Empty array and >4 items both return 422
 
 ### Tests to run before Behind the Build page goes live
 - [x] Rate limit returns 429 after threshold
@@ -93,22 +92,22 @@ Allow users to optionally refine results beyond mood. All filters
 are additive — mood interpretation remains the primary input.
 Filters pass directly to TMDb Discover parameters, bypassing Claude.
 
-### Phase 1 — High value, low complexity (build next)
+### Phase 1 — High value, low complexity (backend ✅, frontend pending)
 
-**Original language filter**
+**Original language filter** (backend ✅)
 - Frontend: a dropdown with common options:
   Any (default), English, Hindi, Korean, Japanese, French, Spanish, Tamil
-- Backend: adds with_original_language=XX to TMDb Discover query
-- MoodRequest and GroupMoodRequest models: add optional
+- ✅ Backend: adds with_original_language=XX to TMDb Discover query
+- ✅ MoodRequest and GroupMoodRequest models: optional
   original_language: str = None field
-- tmdb.py: if original_language is set, add to query params
+- ✅ tmdb.py: if original_language is set, add to query params
 
-**Exclude animation toggle**
+**Exclude animation toggle** (backend ✅)
 - Frontend: a simple toggle — "Exclude animated films"
-- Backend: when true, adds without_genres=16 to TMDb Discover query
-- MoodRequest and GroupMoodRequest models: add optional
+- ✅ Backend: when true, adds without_genres=16 to TMDb Discover query
+- ✅ MoodRequest and GroupMoodRequest models: optional
   exclude_animation: bool = False field
-- tmdb.py: if exclude_animation is true, add without_genres=16
+- ✅ tmdb.py: if exclude_animation is true, add without_genres=16
 
 ### Phase 2 — Useful, slightly more work (build later)
 
@@ -139,7 +138,7 @@ Filters pass directly to TMDb Discover parameters, bypassing Claude.
   when no filters are set
 
 ### Implementation order
-1. Update MoodRequest and GroupMoodRequest Pydantic models
-2. Update tmdb.py discover_movies() to accept and apply filter params
+1. ✅ Update MoodRequest and GroupMoodRequest Pydantic models
+2. ✅ Update tmdb.py discover_movies() to accept and apply filter params
 3. Update Hugin.tsx frontend to show filter UI
-4. Test that filtered and unfiltered queries both return valid results
+4. ✅ Test that filtered and unfiltered queries both return valid results

@@ -50,7 +50,14 @@ hugin/
 ├── ROADMAP.md
 ├── LEARNINGS.md
 ├── render.yaml          ← Render deployment config
-└── CONTRIBUTING.md
+├── CONTRIBUTING.md
+└── tests/               ← 74 tests, all external APIs mocked (pytest tests/ -v)
+    ├── conftest.py      ← Shared fixtures (mock movies, params, responses)
+    ├── test_password.py ← Password derivation and hash tests (10 tests)
+    ├── test_mood.py     ← Claude response parsing and mood interpretation (17 tests)
+    ├── test_tmdb.py     ← TMDb discover query construction and detail (18 tests)
+    ├── test_omdb.py     ← OMDb enrichment and error handling (8 tests)
+    └── test_main.py     ← FastAPI endpoint integration tests (21 tests)
 
 ## API endpoints
 - GET  /                   → health check
@@ -117,7 +124,7 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 - Frontend independently derives the word using the same seed (hardcoded
   in Hugin.tsx — Lovable personal plan does not support build secrets)
   and compares against user input
-- WORD_LIST has 30 evocative single words (ember, dusk, reel, etc.)
+- WORD_LIST has 29 evocative single words (ember, dusk, reel, etc.)
 
 ## Pain points this solves
 1. Can't decide what to watch — decision fatigue from too many options
@@ -165,8 +172,8 @@ This surfaces high-quality, low-popularity films the algorithms bury.
   /recommend: 10 requests/minute, /recommend-group: 5 requests/minute.
   Group endpoint is stricter because each mood hits the Claude API.
 - **Input validation** — Pydantic Field() constraints:
-  mood: min 1, max 500 chars. Group moods: max 4 items, each max 500 chars.
-  original_language: max 10 chars if provided.
+  mood: min 1, max 500 chars. Group moods: min 1, max 4 items, each
+  min 1 / max 500 chars. original_language: max 10 chars if provided.
 - **Global error handler** — unhandled exceptions return
   `{"error": "Something went wrong. Please try again."}` with status 500.
   No stack traces, API keys, or internal details leak to the client.
@@ -183,9 +190,11 @@ This surfaces high-quality, low-popularity films the algorithms bury.
 7. ✅ Add project card to job-joseph.com/projects (src/pages/Projects.tsx)
 8. ✅ Lock CORS to job-joseph.com + localhost:5173
 9. ✅ Input validation, rate limiting, global error handler
-10. [ ] Behind the Build page at /projects/behind-the-build/hugin
-11. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
-12. [ ] Optional: custom domain hugin.job-joseph.com
+10. ✅ Advanced filters (language, exclude animation, min year)
+11. ✅ Pytest test suite (74 tests, all external APIs mocked)
+12. [ ] Behind the Build page at /projects/behind-the-build/hugin
+13. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
+14. [ ] Optional: custom domain hugin.job-joseph.com
 
 ## Deployment
 - Hosted on Render (free tier)

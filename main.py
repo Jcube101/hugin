@@ -39,7 +39,7 @@ class MoodRequest(BaseModel):
     min_year: int | None = None
 
 class GroupMoodRequest(BaseModel):
-    moods: List[Annotated[str, Field(min_length=1, max_length=500)]] = Field(max_length=4)
+    moods: List[Annotated[str, Field(min_length=1, max_length=500)]] = Field(min_length=1, max_length=4)
     original_language: str | None = Field(default=None, max_length=10)
     exclude_animation: bool = False
     min_year: int | None = None

@@ -37,7 +37,7 @@ Hugin is gated by a daily password that rotates at UTC midnight:
 
 1. `SHA-256(HUGIN_SEED + "2026-04-25")` produces a hash
 2. First 4 bytes of the hash are converted to an integer
-3. `integer % 29` indexes into WORD_LIST (29 evocative single words: ember, dusk, reel, etc.)
+3. `integer % 29` indexes into WORD_LIST (29 words: ember, dusk, reel, etc.)
 4. The resulting word is today's password
 
 The API only exposes a 16-character hash prefix via `GET /password-hash` — never the seed or the plain password. The frontend independently derives the word using the same seed (hardcoded directly in Hugin.tsx — Lovable personal plan does not support build secrets, so `VITE_HUGIN_SEED` is not read from environment variables) and compares against user input client-side.
@@ -85,6 +85,23 @@ Limiting to the first genre and capping the page range prevents empty results on
 ```json
 {"mood": "something funny but not dumb"}
 ```
+
+**Optional filter fields (both endpoints):**
+```json
+{
+  "mood": "feel good",
+  "original_language": "ko",
+  "exclude_animation": true,
+  "min_year": 2010
+}
+```
+
+- `original_language`: ISO 639-1 code (e.g. "en", "hi", "ko") or null
+- `exclude_animation`: boolean, default false — adds `without_genres=16`
+- `min_year`: integer year or null — adds `primary_release_date.gte`
+
+All filter fields are optional. Omitting them produces identical behaviour
+to before. Filters pass directly to TMDb Discover, bypassing Claude.
 
 **Response:**
 ```json
@@ -135,6 +152,28 @@ Limiting to the first genre and capping the page range prevents empty results on
 ```
 
 **Response:** Same shape as /recommend, but returns 3 results.
+
+### Input validation
+
+Both endpoints enforce Pydantic Field() constraints:
+- `mood`: min 1, max 500 characters
+- `moods`: min 1, max 4 items, each min 1 / max 500 characters
+- `original_language`: max 10 characters if provided
+- Invalid inputs return 422 with Pydantic validation details
+
+### Rate limiting
+
+Per-IP rate limits via slowapi:
+- `/recommend`: 10 requests per minute
+- `/recommend-group`: 5 requests per minute (stricter because each mood
+  hits the Claude API)
+- Exceeding the limit returns 429 Too Many Requests
+
+### Error handling
+
+- Unhandled exceptions return `{"error": "Something went wrong. Please try again."}`
+  with status 500 — no stack traces, API keys, or internal details
+- Validation errors (422) and rate limits (429) use their own handlers
 
 ## Frontend (in the main job-joseph.com repo)
 

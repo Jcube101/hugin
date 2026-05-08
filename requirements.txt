@@ -4,3 +4,5 @@ httpx
 anthropic
 python-dotenv
 slowapi
+pytest
+pytest-asyncio

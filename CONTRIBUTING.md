@@ -41,13 +41,23 @@ This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -
 
 ## Tests
 
-No test suite yet. For now, test manually with curl:
+Run the full test suite (74 tests, all external APIs mocked):
+
+```bash
+pytest tests/ -v
+```
+
+No API keys are needed for tests. All Claude, TMDb, and OMDb calls are mocked.
+
+To test manually with curl:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/recommend \
   -H "Content-Type: application/json" \
   -d '{"mood": "something funny but not dumb"}'
 ```
+
+Note: the server has rate limits (10/min for `/recommend`, 5/min for `/recommend-group`).
 
 ## Frontend
 

@@ -9,6 +9,8 @@ Hugin is a mood-based movie recommendation API. You describe how you feel in fre
 - **TMDb API** — movie discovery and detail
 - **OMDb API** — Rotten Tomatoes scores, IMDb ratings, content ratings
 - **httpx** — async HTTP client with connection pooling
+- **slowapi** — rate limiting (10/min solo, 5/min group per IP)
+- **pytest** / **pytest-asyncio** — 74 tests, all external APIs mocked
 
 ## Live deployment
 
@@ -81,12 +83,20 @@ curl http://127.0.0.1:8000/password-hash
 
 ### POST /recommend
 
-Solo mode. Send a mood description, get 5 enriched movie picks.
+Solo mode. Send a mood description (1–500 chars), get 5 enriched movie picks. Optional filters: `original_language` (ISO 639-1 code), `exclude_animation` (boolean), `min_year` (integer).
 
 ```bash
 curl -X POST http://127.0.0.1:8000/recommend \
   -H "Content-Type: application/json" \
   -d '{"mood": "something funny but not dumb"}'
+```
+
+With filters:
+
+```bash
+curl -X POST http://127.0.0.1:8000/recommend \
+  -H "Content-Type: application/json" \
+  -d '{"mood": "feel good", "original_language": "ko", "exclude_animation": true, "min_year": 2010}'
 ```
 
 ```json
@@ -124,7 +134,7 @@ curl -X POST http://127.0.0.1:8000/recommend \
 
 ### POST /recommend-group
 
-Group mode. Send multiple moods (up to 3 people), get 3 shared picks.
+Group mode. Send 1–4 moods (each 1–500 chars), get 3 shared picks. Same optional filters apply.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/recommend-group \
@@ -133,6 +143,15 @@ curl -X POST http://127.0.0.1:8000/recommend-group \
 ```
 
 Response shape is the same as `/recommend`, with 3 results instead of 5.
+
+## Running Tests
+
+```bash
+source .venv/Scripts/activate  # Windows
+pytest tests/ -v
+```
+
+All external API calls (Claude, TMDb, OMDb) are mocked — no API keys needed for tests.
 
 ## Frontend
 
