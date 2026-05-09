@@ -28,6 +28,8 @@
 - **Page capping** — filters or gem_mode cap pages to 1–2; otherwise 1–5
 - **Gem fallback** — if gem_mode returns empty results, retries with gem_mode disabled
 - **gem_mode prompt tightened** — only triggers for explicit hidden/obscure/underrated requests, not mood words
+- **Request timeouts** — all httpx .get() calls use explicit 10s timeout; timeouts return empty results instead of raising
+- **TMDb retry logic** — 429 (rate limit) retries once after Retry-After header; 500/502/503 retries once after 2s
 
 ## Next
 

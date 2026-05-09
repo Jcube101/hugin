@@ -124,6 +124,15 @@ beyond the smaller filtered result set. Without filters, pages range 1–5
 for more variety. An explicit page parameter (from "try again") is also
 capped to 2 when filters/gem are active.
 
+## Key logic — request timeouts and retries (tmdb.py, omdb.py)
+- All httpx .get() calls use an explicit timeout of 10 seconds.
+- TMDb (tmdb.py): on timeout, returns [] (discover) or {} (detail)
+  instead of raising. On 429, reads the Retry-After header and retries
+  once after sleeping. On 500/502/503, waits 2 seconds and retries once.
+  If the retry also fails, the error is raised.
+- OMDb (omdb.py): on timeout, returns {} instead of raising. No retry
+  logic (OMDb errors already return {} via status code check).
+
 ## Key logic — password (password.py)
 - get_today_password() → plain word, for Job's local use only, NEVER via API
 - get_today_hash() → short hash prefix, safe to expose via /password-hash

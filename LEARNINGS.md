@@ -93,6 +93,28 @@ I also added a fallback for gem_mode specifically: if the query returns zero res
 
 The lesson: any feature that narrows a result set (filters, niche modes, strict thresholds) needs to account for pagination. A page range that works for an unfiltered query of 10,000 results will overshoot a filtered query of 50. When you add filters, audit every place in the code that assumes "there are enough pages."
 
+## Per-request timeouts vs client-level timeouts
+
+The shared `AsyncClient` in both `tmdb.py` and `omdb.py` was initialized with `timeout=15.0` at the client level. This works as a default, but it's invisible at the call site — a reader scanning `await client.get(url, params=query)` has no idea there's a timeout at all. It also means every call shares the same budget, which isn't always right: a TMDb Discover call that fans out to CDN might deserve more time than an OMDb lookup over plain HTTP.
+
+The fix was adding explicit `timeout=10.0` to every `.get()` call. The per-request timeout overrides the client default, so each call site documents its own expectation. The value was tightened from 15s to 10s — if an external API hasn't responded in 10 seconds on a simple lookup, waiting longer rarely helps and just delays the user's response.
+
+The more important change was handling timeout failures gracefully. Before, a timeout would bubble up as an unhandled `httpx.TimeoutException`, which the global error handler would catch and return as a generic 500. Now, timeouts in `discover_movies()` return `[]` and in `get_movie_detail()` / `enrich_with_omdb()` return `{}`. The user might get fewer results or missing ratings, but they get a response instead of an error.
+
+The lesson: client-level timeouts are a safety net; per-request timeouts are documentation. Use both. And when an external API timeout doesn't represent a fatal error for the user's request, catch it and degrade gracefully rather than failing the whole request.
+
+## TMDb 429 and 5xx retries
+
+TMDb's API returns 429 with a `Retry-After` header when you hit their rate limit, and occasionally returns 500/502/503 during transient outages. Before adding retry logic, both cases would raise through the global error handler as a 500 to the user — even though a simple retry a few seconds later would succeed.
+
+The fix was a single-retry pattern for both cases:
+- **429**: read the `Retry-After` header (defaulting to 2 seconds if missing), sleep, retry once. If the retry also fails, raise — persistent rate limiting means something is genuinely wrong.
+- **500/502/503**: wait 2 seconds, retry once. Server errors on CDN-backed APIs like TMDb are almost always transient (edge node restart, deploy in progress). One retry catches the majority of these.
+
+The retry is intentionally limited to one attempt — not exponential backoff, not a retry loop. This is a user-facing API where latency matters. One retry adds 2-3 seconds; a retry loop could add 30+. If TMDb is genuinely down, no amount of retrying from a single request handler will fix it.
+
+The lesson: for user-facing APIs that depend on external services, one retry with a short sleep handles most transient failures without meaningfully degrading response time. Save exponential backoff for batch jobs and background workers where latency doesn't matter.
+
 ## CORS cold start false positive
 
 When testing from the Lovable preview deployment (`preview--job-joseph.lovable.app`), API requests silently failed. The browser showed a CORS error. Initial instinct was that Render's free tier had cold-started and the request timed out — the classic Render spin-down problem where the first request after idle takes 30+ seconds.

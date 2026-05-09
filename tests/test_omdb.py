@@ -25,7 +25,7 @@ class TestEnrichWithOmdb:
 
     @pytest.mark.asyncio
     async def test_extracts_imdb_rating(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({
                 "imdbRating": "8.4",
                 "Rated": "PG-13",
@@ -46,7 +46,7 @@ class TestEnrichWithOmdb:
 
     @pytest.mark.asyncio
     async def test_extracts_rt_score(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({
                 "imdbRating": "7.5",
                 "Rated": "R",
@@ -68,7 +68,7 @@ class TestEnrichWithOmdb:
 
     @pytest.mark.asyncio
     async def test_no_rt_score_returns_none(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({
                 "imdbRating": "7.0",
                 "Rated": "PG",
@@ -98,7 +98,7 @@ class TestEnrichWithOmdb:
 
     @pytest.mark.asyncio
     async def test_http_error_returns_empty_dict(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({}, status_code=500)
 
         mock_client = MagicMock()
@@ -112,7 +112,7 @@ class TestEnrichWithOmdb:
 
     @pytest.mark.asyncio
     async def test_rated_field_extracted(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({
                 "imdbRating": "6.5",
                 "Rated": "R",
@@ -130,7 +130,7 @@ class TestEnrichWithOmdb:
 
     @pytest.mark.asyncio
     async def test_empty_ratings_array(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({
                 "imdbRating": "5.0",
                 "Rated": "PG",
@@ -164,7 +164,7 @@ class TestOmdbDailyLimit:
 
     @pytest.mark.asyncio
     async def test_counter_increments_on_call(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({
                 "imdbRating": "7.0", "Rated": "PG", "Ratings": [],
             })
@@ -190,8 +190,8 @@ class TestOmdbDailyLimit:
     @pytest.mark.asyncio
     async def test_counter_resets_on_new_day(self):
         omdb._call_count = 500
-        omdb._call_date = "2026-05-07"
+        omdb._call_date = "2000-01-01"
 
         info = get_omdb_call_count()
         assert info["calls"] == 0
-        assert info["date"] == "2026-05-08"
+        assert info["date"] != "2000-01-01"

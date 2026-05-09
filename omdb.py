@@ -33,11 +33,14 @@ async def enrich_with_omdb(imdb_id: str) -> dict:
     if _call_count >= OMDB_DAILY_LIMIT:
         return {}
     api_key = os.getenv("OMDB_API_KEY")
-    r = await _get_client().get(OMDB_BASE, params={
-        "i": imdb_id,
-        "apikey": api_key,
-        "tomatoes": "true"
-    })
+    try:
+        r = await _get_client().get(OMDB_BASE, params={
+            "i": imdb_id,
+            "apikey": api_key,
+            "tomatoes": "true"
+        }, timeout=10.0)
+    except httpx.TimeoutException:
+        return {}
     _call_count += 1
     if r.status_code != 200:
         return {}

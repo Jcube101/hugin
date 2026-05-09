@@ -22,7 +22,7 @@ def captured_query():
     """Capture the query params passed to the mocked httpx client."""
     queries = []
 
-    async def mock_get(url, params=None):
+    async def mock_get(url, params=None, **kwargs):
         queries.append({"url": url, "params": params or {}})
         return _mock_httpx_response({"results": [
             {"id": i + 1, "title": f"Movie {i + 1}"} for i in range(5)
@@ -188,7 +188,7 @@ class TestDiscoverMovies:
 
     @pytest.mark.asyncio
     async def test_returns_correct_number_of_results(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({"results": [
                 {"id": i + 1, "title": f"Movie {i + 1}"} for i in range(10)
             ]})
@@ -206,7 +206,7 @@ class TestDiscoverMovies:
 
     @pytest.mark.asyncio
     async def test_empty_tmdb_response_returns_empty_list(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({"results": []})
 
         mock_client = MagicMock()
@@ -222,7 +222,7 @@ class TestDiscoverMovies:
     async def test_page_randomisation_within_bounds(self):
         pages_seen = set()
 
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             pages_seen.add(params.get("page"))
             return _mock_httpx_response({"results": [{"id": 1, "title": "M"}]})
 
@@ -241,7 +241,7 @@ class TestDiscoverMovies:
     async def test_gem_mode_page_capped_at_2(self):
         pages_seen = set()
 
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             pages_seen.add(params.get("page"))
             return _mock_httpx_response({"results": [{"id": 1, "title": "M"}]})
 
@@ -260,7 +260,7 @@ class TestGetMovieDetail:
 
     @pytest.mark.asyncio
     async def test_returns_imdb_id(self, mock_tmdb_detail_response):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response(mock_tmdb_detail_response)
 
         mock_client = MagicMock()
@@ -274,7 +274,7 @@ class TestGetMovieDetail:
 
     @pytest.mark.asyncio
     async def test_returns_runtime(self, mock_tmdb_detail_response):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response(mock_tmdb_detail_response)
 
         mock_client = MagicMock()
@@ -288,7 +288,7 @@ class TestGetMovieDetail:
 
     @pytest.mark.asyncio
     async def test_returns_genres_as_names(self, mock_tmdb_detail_response):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response(mock_tmdb_detail_response)
 
         mock_client = MagicMock()
@@ -302,7 +302,7 @@ class TestGetMovieDetail:
 
     @pytest.mark.asyncio
     async def test_missing_imdb_id_returns_none(self):
-        async def mock_get(url, params=None):
+        async def mock_get(url, params=None, **kwargs):
             return _mock_httpx_response({
                 "runtime": 90,
                 "tagline": "No IMDB",

@@ -1,4 +1,5 @@
 import os
+import asyncio
 import httpx
 import random
 
@@ -55,8 +56,23 @@ async def discover_movies(params: dict, limit: int = 5, filters: dict = {}, page
     if filters.get("min_year"):
         query["primary_release_date.gte"] = f"{filters['min_year']}-01-01"
 
-    r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query)
-    r.raise_for_status()
+    try:
+        r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query, timeout=10.0)
+        r.raise_for_status()
+    except httpx.TimeoutException:
+        return []
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            retry_after = int(e.response.headers.get("Retry-After", 2))
+            await asyncio.sleep(retry_after)
+            r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query, timeout=10.0)
+            r.raise_for_status()
+        elif e.response.status_code in (500, 502, 503):
+            await asyncio.sleep(2)
+            r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query, timeout=10.0)
+            r.raise_for_status()
+        else:
+            raise
     results = r.json().get("results", [])[:limit]
 
     if not results and params.get("gem_mode"):
@@ -67,21 +83,58 @@ async def discover_movies(params: dict, limit: int = 5, filters: dict = {}, page
             str(g) for g in params.get("genres", [])
         )
         query["page"] = 1
-        r = await _get_client().get(
-            f"{TMDB_BASE}/discover/movie", params=query
-        )
-        r.raise_for_status()
+        try:
+            r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query, timeout=10.0)
+            r.raise_for_status()
+        except httpx.TimeoutException:
+            return []
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                retry_after = int(e.response.headers.get("Retry-After", 2))
+                await asyncio.sleep(retry_after)
+                r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query, timeout=10.0)
+                r.raise_for_status()
+            elif e.response.status_code in (500, 502, 503):
+                await asyncio.sleep(2)
+                r = await _get_client().get(f"{TMDB_BASE}/discover/movie", params=query, timeout=10.0)
+                r.raise_for_status()
+            else:
+                raise
         results = r.json().get("results", [])[:limit]
 
     return results
 
 async def get_movie_detail(movie_id: int) -> dict:
     api_key = os.getenv("TMDB_API_KEY")
-    r = await _get_client().get(
-        f"{TMDB_BASE}/movie/{movie_id}",
-        params={"api_key": api_key, "language": "en-US"}
-    )
-    r.raise_for_status()
+    try:
+        r = await _get_client().get(
+            f"{TMDB_BASE}/movie/{movie_id}",
+            params={"api_key": api_key, "language": "en-US"},
+            timeout=10.0
+        )
+        r.raise_for_status()
+    except httpx.TimeoutException:
+        return {}
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            retry_after = int(e.response.headers.get("Retry-After", 2))
+            await asyncio.sleep(retry_after)
+            r = await _get_client().get(
+                f"{TMDB_BASE}/movie/{movie_id}",
+                params={"api_key": api_key, "language": "en-US"},
+                timeout=10.0
+            )
+            r.raise_for_status()
+        elif e.response.status_code in (500, 502, 503):
+            await asyncio.sleep(2)
+            r = await _get_client().get(
+                f"{TMDB_BASE}/movie/{movie_id}",
+                params={"api_key": api_key, "language": "en-US"},
+                timeout=10.0
+            )
+            r.raise_for_status()
+        else:
+            raise
     data = r.json()
     return {
         "imdb_id": data.get("imdb_id"),
