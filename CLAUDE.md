@@ -30,16 +30,17 @@ and reports back. Trusted, perceptive, personal.
   lightweight structured extraction task that doesn't require Sonnet.
 - TMDb is the primary data source (Discover endpoint)
 - OMDb is the enrichment layer (RT score, IMDb rating) via shared imdb_id
-- All external calls are async (httpx). TMDb detail calls are sequential
-  (to avoid TLS connection storms), OMDb enrichment is parallel via
-  asyncio.gather (OMDb uses plain HTTP, no TLS pressure)
+- All external calls are async (httpx) with explicit 10s per-request
+  timeouts. TMDb detail calls are sequential (to avoid TLS connection
+  storms), OMDb enrichment is parallel via asyncio.gather (OMDb uses
+  plain HTTP, no TLS pressure). TMDb 429s and 5xx errors retry once.
 
 ## Repo structure
 hugin/
 ├── main.py              ← FastAPI app, routes, CORS
 ├── mood.py              ← Claude API calls (interpret_mood, interpret_group_mood)
-├── tmdb.py              ← TMDb Discover + movie detail
-├── omdb.py              ← OMDb enrichment by imdb_id
+├── tmdb.py              ← TMDb Discover + movie detail (10s timeout, 429/5xx retry)
+├── omdb.py              ← OMDb enrichment by imdb_id (10s timeout)
 ├── password.py          ← Deterministic daily password logic (run: python password.py)
 ├── requirements.txt
 ├── .env                 ← Gitignored. Contains all API keys + HUGIN_SEED
@@ -56,8 +57,8 @@ hugin/
     ├── test_password.py ← Password derivation and hash tests (10 tests)
     ├── test_mood.py     ← Claude response parsing and mood interpretation (17 tests)
     ├── test_tmdb.py     ← TMDb discover query construction and detail (18 tests)
-    ├── test_omdb.py     ← OMDb enrichment and error handling (8 tests)
-    └── test_main.py     ← FastAPI endpoint integration tests (21 tests)
+    ├── test_omdb.py     ← OMDb enrichment and error handling (11 tests)
+    └── test_main.py     ← FastAPI endpoint integration tests (22 tests)
 
 ## API endpoints
 - GET  /                   → health check
@@ -212,9 +213,10 @@ capped to 2 when filters/gem are active.
 9. ✅ Input validation, rate limiting, global error handler
 10. ✅ Advanced filters (language, exclude animation, min year)
 11. ✅ Pytest test suite (79 tests, all external APIs mocked)
-12. [ ] Behind the Build page at /projects/behind-the-build/hugin
-13. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
-14. [ ] Optional: custom domain hugin.job-joseph.com
+12. ✅ Request timeouts (10s) and TMDb 429/5xx retry logic
+13. [ ] Behind the Build page at /projects/behind-the-build/hugin
+14. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
+15. [ ] Optional: custom domain hugin.job-joseph.com
 
 ## Deployment
 - Hosted on Render (free tier)
