@@ -48,9 +48,13 @@ uvicorn main:app --reload
 The API runs at `http://127.0.0.1:8000`.
 
 To get today's password locally:
-
 ```bash
 python password.py
+```
+
+To get today's password locally via alias anywhere on the pi:
+```bash
+hugin-password
 ```
 
 This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -c "from password import get_today_password; print(get_today_password())"` — that skips `load_dotenv()` and silently produces the wrong password.
