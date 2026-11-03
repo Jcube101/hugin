@@ -26,8 +26,7 @@ if not os.getenv("HUGIN_SEED"):
 
 # --- Password gate -------------------------------------------------------------
 # The frontend sends the typed word in this header on every recommendation call.
-# Enforcement is off until the frontend sends it; then set HUGIN_REQUIRE_PASSWORD=1
-# in .env and restart.
+# Enforced when HUGIN_REQUIRE_PASSWORD=1 in .env (on in production since Nov 2026).
 PASSWORD_HEADER = "X-Hugin-Password"
 REQUIRE_PASSWORD = os.getenv("HUGIN_REQUIRE_PASSWORD") == "1"
 

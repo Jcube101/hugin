@@ -205,26 +205,20 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
     HUGIN_REQUIRE_PASSWORD=1 → 401 {"error": "Enter today's word to
     continue."}. The check runs inside the rate-limited endpoint, so wrong
     guesses count toward the limit and never reach Claude.
-- Rollout (audit batch 2):
-  - Phase A ✅ live — backend accepts the header and serves
-    /verify-password; enforcement off, so the old frontend keeps working.
-    /password-hash removed.
-  - Phase B — Hugin.tsx calls /verify-password, sends the header, re-shows
-    the gate on 401, and drops the seed + local derivation. Committed in the
-    site repo (c11822a); must be published from Lovable before Phase C.
-  - Phase C — set HUGIN_REQUIRE_PASSWORD=1 and replace HUGIN_SEED with a
-    long random value. The old seed is public: it was a string literal in
-    Hugin.tsx (site git history + published bundles) and was used as the
-    example seed in tests/test_password.py on the public GitHub repo until
-    November 2026. Rotating makes those copies worthless; no history
-    rewrite needed. Never put the real seed in tests or docs.
+- Production runs with HUGIN_REQUIRE_PASSWORD=1 (since 4 Nov 2026). Setting
+  it to 0 and restarting turns the check off again (emergency only).
+- HUGIN_SEED is a random value that exists only in .env on the Pi; nothing
+  else needs it, so it doesn't need remembering. If .env is lost, generate
+  a new one. Never put the real seed in tests, docs or the frontend.
+- History (audit batch 2, Nov 2026): the gate used to run in the browser,
+  deriving the word from a seed hardcoded in Hugin.tsx, and that seed was
+  also used as the example seed in tests/test_password.py on the public
+  GitHub repo. The seed was rotated when enforcement went on, so those old
+  copies are worthless; no history rewrite was needed.
 - To get today's password locally: `python password.py` from the hugin/
   directory (or the `hugin-password` alias on the Pi). This calls
   load_dotenv() before reading HUGIN_SEED; without it the script now
   fails loudly instead of printing a wrong word.
-- Until Phase B is published, the frontend derives the word itself from the
-  seed, hardcoded as a string literal in Hugin.tsx (Lovable personal plan
-  has no build secrets)
 - WORD_LIST has 29 evocative single words (ember, dusk, reel, etc.).
   Staying at 29 is a deliberate choice (Job, Nov 2026): Hugin is meant to be
   fun, and guessing the word only gets rate-limited movie picks — the API
@@ -259,17 +253,17 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 - Project card added to src/pages/Projects.tsx
 - Design follows existing site conventions (Plus Jakarta Sans, teal
   primary, orange accent, dark mode)
-- Password gate: single text input. Before Phase B it derived the word in
-  the browser from a seed string literal; after Phase B it calls
-  POST /verify-password, saves the word in localStorage ("hugin_password")
-  and sends it as X-Hugin-Password; a 401 re-locks the page
+- Password gate: single text input. Calls POST /verify-password, saves the
+  word in localStorage ("hugin_password") and sends it as X-Hugin-Password;
+  a 401 re-locks the page. On load, a saved word is re-checked; only a 401
+  deletes it. The page has no seed and can't work out the word.
 - API base: one API_BASE constant = https://hugin.job-joseph.com
 - Filters sent: original_language null for "Any"; min_year null, or 2010
   when the switch is on; exclude_animation always a boolean
-- page: random 1–3 on every run; "Try again" re-runs with a new random page
-  (so it can repeat a page)
-- Errors: shows the JSON "error" field (after Phase B), otherwise "Something
-  went wrong. Try again."; network errors and 5xx retry once after 3s
+- page: a new search picks a random page 1–3; "Try again" sends the
+  previous page + 1 (the backend wraps past the end)
+- Errors: shows the JSON "error" field, otherwise "Something went wrong.
+  Try again."; network errors and 5xx retry once after 3s ("Retrying...")
 - Movie cards render: poster, title, year, genres, runtime, IMDb rating,
   RT score, hidden gem badge
 - Hidden gem badge: shown when params_used.gem_mode is true, OR on the last
@@ -320,9 +314,8 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 13. ✅ Moved hosting to the Pi — https://hugin.job-joseph.com
 14. ✅ Audit batch 1 — search fallback steps, quality floor, error
     handling, CORS on errors, Claude output validation, input validation
-15. [ ] Audit batch 2 — server-side password check (Phase A backend built,
-    /password-hash removed; Phase B Hugin.tsx written; Phase C enforce +
-    rotate seed)
+15. ✅ Audit batch 2 — server-side password check: /verify-password,
+    X-Hugin-Password enforced, /password-hash removed, seed rotated
 16. [ ] Audit batch 3 — use Claude's keywords (TMDb keyword IDs), cache
     detail/OMDb lookups, consider Haiku 5.5
 17. [ ] Behind the Build page at /projects/behind-the-build/hugin

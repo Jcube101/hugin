@@ -46,10 +46,10 @@
   - Tests: 79 → 142
 - **TMDb via api.tmdb.org** — api.themoviedb.org failed TLS ~60% of the time from the Pi's network
 - **TMDb outages return 503 "try again"** instead of an empty list; search stops at the first unreachable call; connect timeout 5s (worst case ~15s, was ~90s). Tests: 155
+- **Audit batch 2 — real password gate** (November 2026) — `POST /verify-password` and an `X-Hugin-Password` header checked on every recommendation call (`HUGIN_REQUIRE_PASSWORD=1`); wrong guesses are rate limited and never reach Claude; 1-hour grace after UTC midnight; `/password-hash` removed (it gave the word away); seed required at startup and rotated (the old one was in Hugin.tsx and in a test on the public repo). Hugin.tsx no longer knows the seed. The 29-word list stays — deliberate, it's meant to be fun.
 
 ## Next
 
-- **Audit batch 2 — real password gate** — Phase A built (backend: `/verify-password`, `X-Hugin-Password` header check behind `HUGIN_REQUIRE_PASSWORD`, seed required, 1-hour midnight grace, `/password-hash` removed — the frontend never used it). Phase B (Hugin.tsx) written, publish after Phase A is live. Phase C: enforce and replace `HUGIN_SEED` with a random value (the old one is public: it was in Hugin.tsx and in a test on the public GitHub repo). The 29-word list stays — deliberate, it's meant to be fun.
 - **Audit batch 3 — recommendation quality and cost**:
   - Use Claude's keywords — they're generated but never sent to TMDb. Resolve via `/search/keyword` to IDs (cached) and pass `with_keywords` (pipe-joined)
   - Cache TMDb detail and OMDb lookups in memory (the Pi doesn't sleep, so caches persist)

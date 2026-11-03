@@ -42,7 +42,7 @@ OMDB_API_KEY=your_omdb_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
 HUGIN_SEED=your_secret_seed_phrase
 HUGIN_DOCS=1          # optional: enables /docs locally (off in production)
-HUGIN_REQUIRE_PASSWORD=1   # optional: recommendation calls need the X-Hugin-Password header
+HUGIN_REQUIRE_PASSWORD=1   # recommendation calls need the X-Hugin-Password header (on in production)
 ```
 
 Start the server:

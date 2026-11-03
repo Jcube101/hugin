@@ -40,9 +40,9 @@ Hugin is gated by a daily password that rotates at UTC midnight:
 3. `integer % 29` indexes into WORD_LIST (29 words: ember, dusk, reel, etc.)
 4. The resulting word is today's password
 
-The backend checks the password: `POST /verify-password` for the gate, and an `X-Hugin-Password` header on every recommendation call (enforced when `HUGIN_REQUIRE_PASSWORD=1`). Yesterday's word is accepted for the first hour after UTC midnight; case and spaces are ignored. Wrong guesses are rate limited and never reach Claude.
+The backend checks the password: `POST /verify-password` for the gate, and an `X-Hugin-Password` header on every recommendation call (enforced in production via `HUGIN_REQUIRE_PASSWORD=1`). Yesterday's word is accepted for the first hour after UTC midnight; case and spaces are ignored. Wrong guesses are rate limited and never reach Claude.
 
-The old `GET /password-hash` endpoint was removed: its prefix gave the word away (its first 8 hex characters are the bytes that pick it), and the frontend never used it. Until the new frontend is published, the page derives the word in the browser from the seed, hardcoded as a string literal in Hugin.tsx (Lovable personal plan has no build secrets), and compares it with the user's input.
+The old `GET /password-hash` endpoint was removed: its prefix gave the word away (its first 8 hex characters are the bytes that pick it), and the frontend never used it. The page no longer knows the seed: until November 2026 it derived the word in the browser from a seed hardcoded in Hugin.tsx, so the seed was rotated when the server-side check went live.
 
 ## Mood-to-params logic (mood.py)
 
@@ -216,6 +216,6 @@ Built as a page inside job-joseph.com (existing React app), not a separate Lovab
 - **Group mode** — up to 3 people enter moods on the same screen, then 3 shared picks.
 - **Design** — follows existing site conventions (Plus Jakarta Sans, teal primary, orange accent, dark mode).
 - **Skeleton loading states** — not spinners. Cards render as grey shapes that fill in.
-- **"Try again"** — re-runs the same mood and filters with a new random `page` from 1–3. The backend wraps any page round to pages that exist.
+- **"Try again"** — re-runs the same mood and filters with the previous `page` + 1 (a new search starts on a random page from 1–3). The backend wraps any page round to pages that exist.
 - **API target** — calls https://hugin.job-joseph.com directly (the old Render URL is suspended).
-- **Seed handling** — none after the new frontend is published. Before that, the seed was a string literal in Hugin.tsx (so it must be rotated).
+- **Seed handling** — none. The page has no seed; the backend checks the word.
