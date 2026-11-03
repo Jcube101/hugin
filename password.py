@@ -35,12 +35,6 @@ def _word_for(day: datetime) -> str:
     return WORD_LIST[int.from_bytes(_digest(day)[:4], "big") % len(WORD_LIST)]
 
 
-def get_today_hash() -> str:
-    # Legacy: served by /password-hash until the frontend stops using it.
-    # Its first 8 hex chars are the bytes that pick the word, so it gives the word away.
-    return _digest(_now()).hex()[:16]
-
-
 def get_today_password() -> str:
     return _word_for(_now())
 

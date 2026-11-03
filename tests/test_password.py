@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from password import WORD_LIST, get_today_hash, get_today_password, is_valid_password
+from password import WORD_LIST, get_today_password, is_valid_password
 
 
 def _fixed_date(date_str, fmt="%Y-%m-%d"):
@@ -118,25 +118,3 @@ class TestIsValidPassword:
             assert is_valid_password(word) is False
 
 
-class TestGetTodayHash:
-
-    def test_returns_16_char_string(self):
-        with _fixed_date("2026-03-15"), patch.dict("os.environ", {"HUGIN_SEED": "test"}):
-            h = get_today_hash()
-        assert isinstance(h, str)
-        assert len(h) == 16
-        int(h, 16)  # should parse as hex
-
-    def test_different_dates_give_different_hashes(self):
-        hashes = set()
-        with patch.dict("os.environ", {"HUGIN_SEED": "test"}):
-            for day in range(1, 11):
-                with _fixed_date(f"2026-02-{day:02d}"):
-                    hashes.add(get_today_hash())
-        assert len(hashes) == 10
-
-    def test_hash_is_deterministic(self):
-        with _fixed_date("2026-04-01"), patch.dict("os.environ", {"HUGIN_SEED": "test"}):
-            h1 = get_today_hash()
-            h2 = get_today_hash()
-        assert h1 == h2

@@ -61,19 +61,18 @@ hugin/
 ├── LEARNINGS.md
 ├── render.yaml          ← Legacy Render config (Render service is suspended)
 ├── CONTRIBUTING.md
-└── tests/               ← 189 tests, all external APIs mocked (pytest tests/ -v)
+└── tests/               ← 183 tests, all external APIs mocked (pytest tests/ -v)
     ├── conftest.py      ← Shared fixtures (mock movies, params, responses)
-    ├── test_password.py ← Password derivation, validation, grace period (24 tests)
+    ├── test_password.py ← Password derivation, validation, grace period (21 tests)
     ├── test_mood.py     ← Claude reply parsing, validation, request shape (35 tests)
     ├── test_tmdb.py     ← Discover queries, fallback steps, paging, retries, outages, detail (46 tests)
     ├── test_omdb.py     ← OMDb enrichment, error handling, daily cap (19 tests)
-    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, password gate, logging (65 tests)
+    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, password gate, logging (62 tests)
 
 ## API endpoints
 - GET/HEAD /               → health check (HEAD for uptime monitors)
 - GET  /health             → OMDb daily call count, limit, and date
 - POST /verify-password    → {password: str} → 200 {ok: true} | 401 {error} (10/min per IP)
-- GET  /password-hash      → legacy hash prefix; 404 once HUGIN_REQUIRE_PASSWORD=1
 - POST /recommend          → {mood: str, ...filters} → up to 5 enriched movie objects
 - POST /recommend-group    → {moods: str[], ...filters} → up to 3 enriched movie objects
 
@@ -98,7 +97,7 @@ ANTHROPIC_API_KEY=
 HUGIN_SEED=          ← secret phrase, never commit this
 HUGIN_DOCS=          ← optional; "1" turns on /docs locally
 HUGIN_REQUIRE_PASSWORD= ← "1" = recommendation endpoints require the
-                           X-Hugin-Password header; also retires /password-hash
+                           X-Hugin-Password header
 
 ## Movie result object shape
 Each result returned by /recommend or /recommend-group contains the full
@@ -196,9 +195,9 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
   hmac.compare_digest on bytes (str compare_digest rejects non-ASCII).
 - HUGIN_SEED is required: password.py raises and main.py refuses to start
   without it (the old "default-seed" fallback is gone).
-- get_today_hash() → legacy 16-char hex prefix for /password-hash. Its first
-  8 hex chars are exactly the bytes that pick the word, so it gives the word
-  away. Retired when HUGIN_REQUIRE_PASSWORD=1.
+- /password-hash was removed: its 16-char hash prefix gave the word away (the
+  first 8 hex chars are exactly the bytes that pick it), and the frontend
+  never used it.
 - Gate on the API (main.py):
   - POST /verify-password {password} → 200 {"ok": true} or 401
     {"error": "That's not today's word."}. 10/min per IP.
@@ -210,17 +209,19 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
   - Phase A ✅ backend accepts the header and serves /verify-password;
     enforcement off, so the old frontend keeps working.
   - Phase B — Hugin.tsx calls /verify-password, sends the header, re-shows
-    the gate on 401, and drops the hardcoded seed + local derivation.
+    the gate on 401, and drops the seed + local derivation. Written, not yet
+    published — must not be published before Phase A is live.
   - Phase C — set HUGIN_REQUIRE_PASSWORD=1, rotate HUGIN_SEED (the old one
-    is in the site's public bundle/history), optionally enlarge WORD_LIST
-    (safe once the frontend no longer derives the word), then delete
-    /password-hash and get_today_hash().
+    was a string literal in Hugin.tsx, so it is in the site's git history
+    and published bundles), optionally enlarge WORD_LIST (safe once the
+    frontend no longer derives the word).
 - To get today's password locally: `python password.py` from the hugin/
   directory (or the `hugin-password` alias on the Pi). This calls
   load_dotenv() before reading HUGIN_SEED; without it the script now
   fails loudly instead of printing a wrong word.
-- Until Phase B, the frontend derives the word itself using the seed
-  hardcoded in Hugin.tsx (Lovable personal plan has no build secrets)
+- Until Phase B is published, the frontend derives the word itself from the
+  seed, hardcoded as a string literal in Hugin.tsx (Lovable personal plan
+  has no build secrets)
 - WORD_LIST has 29 evocative single words (ember, dusk, reel, etc.)
 
 ## Pain points this solves
@@ -252,12 +253,23 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 - Project card added to src/pages/Projects.tsx
 - Design follows existing site conventions (Plus Jakarta Sans, teal
   primary, orange accent, dark mode)
-- VITE_HUGIN_SEED is hardcoded directly in Hugin.tsx (Lovable personal
-  plan does not support build secrets)
-- Password gate working — single text input, matches against daily word
+- Password gate: single text input. Before Phase B it derived the word in
+  the browser from a seed string literal; after Phase B it calls
+  POST /verify-password, saves the word in localStorage ("hugin_password")
+  and sends it as X-Hugin-Password; a 401 re-locks the page
+- API base: one API_BASE constant = https://hugin.job-joseph.com
+- Filters sent: original_language null for "Any"; min_year null, or 2010
+  when the switch is on; exclude_animation always a boolean
+- page: random 1–3 on every run; "Try again" re-runs with a new random page
+  (so it can repeat a page)
+- Errors: shows the JSON "error" field (after Phase B), otherwise "Something
+  went wrong. Try again."; network errors and 5xx retry once after 3s
 - Movie cards render: poster, title, year, genres, runtime, IMDb rating,
   RT score, hidden gem badge
-- Solo mode: 5 cards (4 standard + 1 gem)
+- Hidden gem badge: shown when params_used.gem_mode is true, OR on the last
+  card in solo mode. KNOWN MISMATCH: the page copy promises "five films, one
+  hidden gem", but the backend does not put a gem last — the last solo card
+  is badged even when it isn't a gem.
 - Group mode: up to 3 people enter moods → 3 shared picks
 - Mobile-first — couch use case, one thumb, under 30 seconds start to pick
 - API host must be https://hugin.job-joseph.com — the old Render URL
@@ -302,8 +314,9 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 13. ✅ Moved hosting to the Pi — https://hugin.job-joseph.com
 14. ✅ Audit batch 1 — search fallback steps, quality floor, error
     handling, CORS on errors, Claude output validation, input validation
-15. [ ] Audit batch 2 — server-side password check (Phase A ✅ backend;
-    Phase B Hugin.tsx; Phase C enforce + rotate seed)
+15. [ ] Audit batch 2 — server-side password check (Phase A backend built,
+    /password-hash removed; Phase B Hugin.tsx written; Phase C enforce +
+    rotate seed)
 16. [ ] Audit batch 3 — use Claude's keywords (TMDb keyword IDs), cache
     detail/OMDb lookups, consider Haiku 5.5
 17. [ ] Behind the Build page at /projects/behind-the-build/hugin

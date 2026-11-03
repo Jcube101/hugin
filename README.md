@@ -10,7 +10,7 @@ Hugin is a mood-based movie recommendation API. You describe how you feel in fre
 - **OMDb API** — Rotten Tomatoes scores, IMDb ratings, content ratings
 - **httpx** — async HTTP client with connection pooling
 - **slowapi** — rate limiting (10/min solo, 5/min group per IP)
-- **pytest** / **pytest-asyncio** — 189 tests, all external APIs mocked
+- **pytest** / **pytest-asyncio** — 183 tests, all external APIs mocked
 
 ## Live deployment
 
@@ -104,18 +104,6 @@ curl -X POST http://127.0.0.1:8000/verify-password \
 `200 {"ok": true}` or `401 {"error": "That's not today's word."}`.
 
 Recommendation requests send the word in an `X-Hugin-Password` header. With `HUGIN_REQUIRE_PASSWORD=1` in `.env`, a missing or wrong header gets `401 {"error": "Enter today's word to continue."}`.
-
-### GET /password-hash (legacy)
-
-Returns today's SHA-256 hash prefix. It gives the word away, so it's being retired: it returns 404 once `HUGIN_REQUIRE_PASSWORD=1`.
-
-```bash
-curl http://127.0.0.1:8000/password-hash
-```
-
-```json
-{"hash": "a3f1b9c2e7d04518"}
-```
 
 ### POST /recommend
 

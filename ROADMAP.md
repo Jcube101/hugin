@@ -9,7 +9,7 @@
 - Deterministic daily password with hash-based gate
 - Hardened response parsing (code fence stripping, genre name-to-ID mapping)
 - Shared httpx clients with connection pooling and retry logic
-- Health check and password-hash endpoints
+- Health check and password-hash endpoints (password-hash since removed)
 - Gem mode fix — limited with_genres to first genre ID, capped page to 1–2
 - Password CLI fix — `python password.py` calls load_dotenv() before reading seed
 - **Backend deployed to Render** (free tier) — https://hugin-5i4y.onrender.com
@@ -49,7 +49,7 @@
 
 ## Next
 
-- **Audit batch 2 — real password gate** — Phase A ✅ (backend: `/verify-password`, `X-Hugin-Password` header check behind `HUGIN_REQUIRE_PASSWORD`, seed required, 1-hour midnight grace). Remaining: Phase B (Hugin.tsx), Phase C (enforce, rotate seed, retire `/password-hash`). The `/password-hash` prefix is enough to derive today's word, the seed is in the public frontend bundle, and the backend never checks the password. Plan: frontend sends the typed word in a header; backend compares it with `hmac.compare_digest` (accepting yesterday's word briefly around UTC midnight); delete `/password-hash`; remove the seed from Hugin.tsx; rotate `HUGIN_SEED`; fail at startup if the seed is missing instead of using "default-seed".
+- **Audit batch 2 — real password gate** — Phase A built (backend: `/verify-password`, `X-Hugin-Password` header check behind `HUGIN_REQUIRE_PASSWORD`, seed required, 1-hour midnight grace, `/password-hash` removed — the frontend never used it). Phase B (Hugin.tsx) written, publish after Phase A is live. Phase C: enforce, rotate `HUGIN_SEED` (it was a string literal in Hugin.tsx), optionally enlarge the word list.
 - **Audit batch 3 — recommendation quality and cost**:
   - Use Claude's keywords — they're generated but never sent to TMDb. Resolve via `/search/keyword` to IDs (cached) and pass `with_keywords` (pipe-joined)
   - Cache TMDb detail and OMDb lookups in memory (the Pi doesn't sleep, so caches persist)

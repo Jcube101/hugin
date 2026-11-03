@@ -7,7 +7,7 @@ import os
 import re
 from typing import Annotated, List
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
@@ -18,7 +18,7 @@ from slowapi.util import get_remote_address
 from mood import interpret_mood, interpret_group_mood
 from tmdb import TMDbUnavailable, discover_movies, get_movie_detail
 from omdb import enrich_with_omdb, get_omdb_call_count
-from password import get_today_hash, is_valid_password
+from password import is_valid_password
 
 # Fail fast: without a seed the password gate can't work
 if not os.getenv("HUGIN_SEED"):
@@ -27,7 +27,7 @@ if not os.getenv("HUGIN_SEED"):
 # --- Password gate -------------------------------------------------------------
 # The frontend sends the typed word in this header on every recommendation call.
 # Enforcement is off until the frontend sends it; then set HUGIN_REQUIRE_PASSWORD=1
-# in .env and restart. That also retires /password-hash.
+# in .env and restart.
 PASSWORD_HEADER = "X-Hugin-Password"
 REQUIRE_PASSWORD = os.getenv("HUGIN_REQUIRE_PASSWORD") == "1"
 
@@ -182,14 +182,6 @@ async def verify_password(request: Request, body: PasswordCheck):
     if not is_valid_password(body.password):
         raise PasswordRequired("That's not today's word.")
     return {"ok": True}
-
-
-@app.get("/password-hash")
-def password_hash():
-    # Legacy: gives today's word away (see password.py). Retired once enforcement is on.
-    if REQUIRE_PASSWORD:
-        raise HTTPException(status_code=404)
-    return {"hash": get_today_hash()}
 
 
 @app.post("/recommend")

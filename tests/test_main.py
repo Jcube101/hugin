@@ -94,20 +94,6 @@ class TestHealthEndpoint:
         assert "limit" in data["omdb"]
 
 
-class TestPasswordHash:
-
-    def test_returns_hash(self, client):
-        r = client.get("/password-hash")
-        assert r.status_code == 200
-        data = r.json()
-        assert "hash" in data
-        assert len(data["hash"]) == 16
-
-    def test_hash_is_string(self, client):
-        r = client.get("/password-hash")
-        assert isinstance(r.json()["hash"], str)
-
-
 class TestRecommendEndpoint:
 
     def test_valid_mood_returns_results(self, client):
@@ -500,9 +486,6 @@ class TestPasswordGateOff:
             for m in mocks:
                 m.stop()
 
-    def test_password_hash_still_served(self, client):
-        assert client.get("/password-hash").status_code == 200
-
 
 class TestPasswordGateOn:
 
@@ -550,5 +533,9 @@ class TestPasswordGateOn:
         assert statuses[:10] == [401] * 10
         assert statuses[10] == 429
 
-    def test_password_hash_retired(self, client):
+
+class TestPasswordHashRemoved:
+
+    def test_password_hash_endpoint_gone(self, client):
+        # It gave today's word away, and the frontend never used it
         assert client.get("/password-hash").status_code == 404

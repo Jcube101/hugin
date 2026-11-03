@@ -42,7 +42,7 @@ Hugin is gated by a daily password that rotates at UTC midnight:
 
 The backend checks the password: `POST /verify-password` for the gate, and an `X-Hugin-Password` header on every recommendation call (enforced when `HUGIN_REQUIRE_PASSWORD=1`). Yesterday's word is accepted for the first hour after UTC midnight; case and spaces are ignored. Wrong guesses are rate limited and never reach Claude.
 
-The legacy `GET /password-hash` prefix gave the word away (its first 8 hex characters are the bytes that pick it), so it is retired once enforcement is on. Until the frontend switches over, the frontend independently derives the word using the same seed (hardcoded directly in Hugin.tsx — Lovable personal plan does not support build secrets, so `VITE_HUGIN_SEED` is not read from environment variables) and compares against user input client-side.
+The old `GET /password-hash` endpoint was removed: its prefix gave the word away (its first 8 hex characters are the bytes that pick it), and the frontend never used it. Until the new frontend is published, the page derives the word in the browser from the seed, hardcoded as a string literal in Hugin.tsx (Lovable personal plan has no build secrets), and compares it with the user's input.
 
 ## Mood-to-params logic (mood.py)
 
@@ -209,13 +209,13 @@ Per-IP rate limits via slowapi:
 
 Built as a page inside job-joseph.com (existing React app), not a separate Lovable project. File: `src/pages/Hugin.tsx`. Route: `/projects/hugin`.
 
-- **Password gate** — first screen. Single text input, matches against daily word.
+- **Password gate** — first screen. Single text input. Checked by `POST /verify-password`; the word is saved in localStorage and sent as `X-Hugin-Password`; a 401 re-locks the page.
 - **Primary input** — large free-text mood box. Quick-fill mood chips below (e.g. "cozy rainy day", "intense thriller") as shortcuts, not replacements.
 - **Mobile-first** — designed for the couch use case. One thumb, portrait orientation, under 30 seconds from open to first pick.
-- **Solo mode** — 5 movie cards (4 standard + 1 gem). Poster, title, year, genres, runtime, IMDb rating, RT score, hidden gem badge.
+- **Solo mode** — 5 movie cards. Poster, title, year, genres, runtime, IMDb rating, RT score, hidden gem badge. The page copy says "five films, one hidden gem" and badges the last card, but the backend doesn't yet put a gem last (known mismatch).
 - **Group mode** — up to 3 people enter moods on the same screen, then 3 shared picks.
 - **Design** — follows existing site conventions (Plus Jakarta Sans, teal primary, orange accent, dark mode).
 - **Skeleton loading states** — not spinners. Cards render as grey shapes that fill in.
-- **"Try again"** — re-queries the API. Can pass an incrementing `page`; the backend wraps it round to pages that exist.
+- **"Try again"** — re-runs the same mood and filters with a new random `page` from 1–3. The backend wraps any page round to pages that exist.
 - **API target** — calls https://hugin.job-joseph.com directly (the old Render URL is suspended).
-- **Seed handling** — `VITE_HUGIN_SEED` is hardcoded in Hugin.tsx because Lovable personal plan does not support build secrets.
+- **Seed handling** — none after the new frontend is published. Before that, the seed was a string literal in Hugin.tsx (so it must be rotated).
