@@ -95,3 +95,16 @@ def mock_tmdb_detail_response():
         "tagline": "A great film.",
         "genres": [{"id": 35, "name": "Comedy"}, {"id": 18, "name": "Drama"}],
     }
+
+
+@pytest.fixture(autouse=True)
+def _clear_caches():
+    """Each test starts with empty caches, so one test's mocked
+    responses can't leak into the next."""
+    import mood
+    import omdb
+    import tmdb
+    tmdb.clear_caches()
+    omdb.clear_cache()
+    mood.clear_cache()
+    yield

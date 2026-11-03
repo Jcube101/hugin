@@ -10,7 +10,7 @@ Hugin is a mood-based movie recommendation API. You describe how you feel in fre
 - **OMDb API** — Rotten Tomatoes scores, IMDb ratings, content ratings
 - **httpx** — async HTTP client with connection pooling
 - **slowapi** — rate limiting (10/min solo, 5/min group per IP)
-- **pytest** / **pytest-asyncio** — 183 tests, all external APIs mocked
+- **pytest** / **pytest-asyncio** — 227 tests, all external APIs mocked
 
 ## Live deployment
 
@@ -81,14 +81,15 @@ curl http://127.0.0.1:8000/
 
 ### GET /health
 
-Returns OMDb daily call count, limit, and date. Useful for monitoring cost protection.
+Returns OMDb daily call count, limit, and date, plus how many entries each in-memory cache holds.
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
 
 ```json
-{"status": "ok", "omdb": {"date": "2026-05-08", "calls": 42, "limit": 950}}
+{"status": "ok", "omdb": {"date": "2026-05-08", "calls": 42, "limit": 950},
+ "cache": {"movie_details": 120, "keywords": 64, "omdb_ratings": 118, "mood_interpretations": 9}}
 ```
 
 ### POST /verify-password
@@ -107,7 +108,7 @@ Recommendation requests send the word in an `X-Hugin-Password` header. With `HUG
 
 ### POST /recommend
 
-Solo mode. Send a mood description (1–500 chars), get up to 5 enriched movie picks.
+Solo mode. Send a mood description (1–500 chars), get up to 5 enriched movie picks: 4 picks and a hidden gem last (`"is_gem": true`).
 
 Optional filters:
 
@@ -116,7 +117,7 @@ Optional filters:
 | `original_language` | 2-letter ISO 639-1 code | e.g. `"ko"`. `null`, `""` or `"any"` mean no filter |
 | `exclude_animation` | boolean | default `false` |
 | `min_year` | integer 0–2100 | `0` or `null` mean no filter |
-| `page` | integer 0–10000 | for "try again" cycling. `0` or `null` pick a random page; pages past the end wrap round |
+| `page` | integer 0–10000 | the page-th batch of results: send `page + 1` for "try again" to get new films, best matches first. `0` or `null` pick a random start |
 
 Invalid values return 422.
 
@@ -154,7 +155,8 @@ curl -X POST http://127.0.0.1:8000/recommend \
       "genres": ["Comedy", "War"],
       "imdb_rating": "8.4",
       "rt_score": "92%",
-      "rated": "G"
+      "rated": "G",
+      "is_gem": false
     }
   ],
   "params_used": {

@@ -170,3 +170,28 @@ Same CDN, same API, different hostname — so something on the network path is i
 The fix was one line: `TMDB_BASE = "https://api.tmdb.org/3"`.
 
 The lesson: when a service moves to a new network, re-test every outbound dependency from that network. And "connection reset" errors that come and go aren't always the remote server's fault. If TCP connects but TLS fails, compare a second hostname for the same service before blaming load or rate limits. It also explains some of the earlier "connection storm" resets: they may have been this all along.
+
+## Measure before changing a prompt
+
+The plan for using Claude's keywords included rewording the prompt to ask for "concrete" TMDb tags ("heist", "time travel") instead of tone words ("witty", "feel good"). Before shipping it, I ran 10 real moods through both prompts and checked every keyword against TMDb's `/search/keyword`. The original prompt won: 23 of 33 keywords were real TMDb tags, versus 17 of 23 for the reworded one. TMDb turns out to have plenty of tone tags — "feel good", "heartwarming", "brutal", "slow burn", "mind-bending" — and the rewording threw those away.
+
+The same 30-call run (a few cents) settled the model question. Haiku 5.5 at low effort gave the same picks at the same speed as Haiku 4.5, for about a seventh of the cost, and refused none of the dark moods (revenge, serial killer).
+
+The lesson: a prompt change that sounds obviously better can be worse. When an LLM's output feeds an API, measure against that API, on a handful of real inputs, before deciding.
+
+## "Try again" needs one ranking, not pages of several searches
+
+After keywords went in, "try again" started repeating films by the third press. Three causes stacked up:
+1. Claude re-interpreted the mood on every press, with slightly different keywords, so page 2 belonged to a different search than page 1.
+2. A "page" was a TMDb page of one step. Small precise steps (8 heist films) ran out and wrapped round to the same films.
+3. The search steps overlap: every heist crime-comedy is also in the plain crime-comedy search, so walking one step after another met the same films twice.
+
+The fix treats each search as one ranked list where every film counts once: precise matches first, then whatever each broader step adds. Page N is simply the N-th batch from that list. The mood's interpretation is cached for an hour, so every press walks the same list. Gem-quality films are held out of the standard list entirely and only appear in the gem slot. After that, five presses on several moods — including a Korean-only filter with a small pool — showed no repeats.
+
+The lesson: pagination over a cascade of fallback queries isn't pagination over any one query. Define the ranking the user is actually paging through, then page that.
+
+## Hidden gems need a credibility floor
+
+With a 150-vote floor, the "hidden gem horror" search returned films TMDb rated 8.3 that IMDb rated 4.7–5.8, plus Michael Jackson's *Thriller* music video. A few hundred votes from enthusiastic fans can push an average very high. Raising the floor to 300, requiring 60+ minutes, and requiring a year since release turned the same search into Come and See, The Cabinet of Dr. Caligari and What Ever Happened to Baby Jane?.
+
+The lesson: "high rating, few votes" is exactly where averages are least reliable. A hidden-gem filter needs a minimum sample size, not just a maximum.

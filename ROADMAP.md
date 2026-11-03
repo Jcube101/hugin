@@ -47,13 +47,18 @@
 - **TMDb via api.tmdb.org** — api.themoviedb.org failed TLS ~60% of the time from the Pi's network
 - **TMDb outages return 503 "try again"** instead of an empty list; search stops at the first unreachable call; connect timeout 5s (worst case ~15s, was ~90s). Tests: 155
 - **Audit batch 2 — real password gate** (November 2026) — `POST /verify-password` and an `X-Hugin-Password` header checked on every recommendation call (`HUGIN_REQUIRE_PASSWORD=1`); wrong guesses are rate limited and never reach Claude; 1-hour grace after UTC midnight; `/password-hash` removed (it gave the word away); seed required at startup and rotated (the old one was in Hugin.tsx and in a test on the public repo). Hugin.tsx no longer knows the seed. The 29-word list stays — deliberate, it's meant to be fun.
+- **Audit batch 3 — recommendation quality and cost** (November 2026):
+  - Claude's keywords matched to TMDb tags and searched first (keyword matches need 7.0+)
+  - Real "4 picks + 1 hidden gem" in solo mode, per-movie `is_gem`; gem-quality films only appear in the gem slot
+  - Better gems: 300–3,000 votes, 7.5+, 1+ year old; all picks 60+ minutes (no shorts or music videos)
+  - "Try again" pages through one deduplicated ranking — no repeats across 5 presses in testing; mood interpretation cached for an hour
+  - Caches: TMDb details 7 days, OMDb ratings 3 days, keyword ids 30 days (sizes on /health)
+  - Haiku 5.5 at low effort (~1/7 the cost of 4.5, same speed); a declined mood falls back to Haiku 4.5
+  - Tests: 183 → 227
 
 ## Next
 
-- **Audit batch 3 — recommendation quality and cost**:
-  - Use Claude's keywords — they're generated but never sent to TMDb. Resolve via `/search/keyword` to IDs (cached) and pass `with_keywords` (pipe-joined)
-  - Cache TMDb detail and OMDb lookups in memory (the Pi doesn't sleep, so caches persist)
-  - Consider Haiku 5.5 (`claude-haiku-5-5`, ~10x cheaper). Needs effort `low` and a higher max_tokens because thinking counts toward the cap
+- **Hugin.tsx: badge from `is_gem`** — small frontend change; today's last-card rule is right whenever a gem exists, `is_gem` makes it exact.
 - **Behind the Build page** — at /projects/behind-the-build/hugin, documenting the project's story and decisions.
 - **GitHub profile card** — add Hugin to the GitHub profile README (Jcube101/Jcube101).
 

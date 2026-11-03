@@ -4,10 +4,14 @@ from datetime import datetime, timezone
 
 import httpx
 
+from cache import MISSING, TTLCache
+
 log = logging.getLogger("hugin.omdb")
 
 OMDB_BASE = "https://www.omdbapi.com/"
 OMDB_DAILY_LIMIT = 950       # free tier allows 1,000/day; keep a margin
+# Ratings move slowly; caching repeat films saves the daily quota and a round trip
+_cache = TTLCache(ttl=3 * 24 * 60 * 60, maxsize=2000)  # imdb id -> ratings dict
 _client = None
 _call_count = 0
 _call_date = None
@@ -33,15 +37,27 @@ def get_omdb_call_count() -> dict:
     return {"date": _call_date, "calls": _call_count, "limit": OMDB_DAILY_LIMIT}
 
 
+def cache_size() -> int:
+    return len(_cache)
+
+
+def clear_cache():
+    _cache.clear()
+
+
 async def enrich_with_omdb(imdb_id: str) -> dict:
     """IMDb rating, Rotten Tomatoes score and content rating.
 
     Returns {} on any failure or once the daily cap is reached — ratings are
-    nice-to-have, so the movie still shows without them.
+    nice-to-have, so the movie still shows without them. Successful lookups are
+    cached for 3 days and don't count toward the cap.
     """
     global _call_count
     if not imdb_id:
         return {}
+    cached = _cache.get(imdb_id)
+    if cached is not MISSING:
+        return dict(cached)
     _reset_if_new_day()
     if _call_count >= OMDB_DAILY_LIMIT:
         return {}
@@ -63,8 +79,10 @@ async def enrich_with_omdb(imdb_id: str) -> dict:
         (x.get("Value") for x in data.get("Ratings") or []
          if x.get("Source") == "Rotten Tomatoes"), None
     )
-    return {
+    ratings = {
         "imdb_rating": data.get("imdbRating"),
         "rt_score": rt_score,
         "rated": data.get("Rated"),
     }
+    _cache.set(imdb_id, ratings)
+    return dict(ratings)

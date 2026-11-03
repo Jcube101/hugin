@@ -259,3 +259,53 @@ class TestOmdbHardening:
 
         assert len(sent) == 1
         assert omdb._call_count == omdb.OMDB_DAILY_LIMIT
+
+
+class TestOmdbCache:
+
+    @pytest.mark.asyncio
+    async def test_repeat_lookup_uses_cache_and_does_not_count(self):
+        sent = []
+
+        async def mock_get(url, params=None, **kwargs):
+            sent.append(params["i"])
+            return _mock_httpx_response({"imdbRating": "8.1", "Rated": "PG", "Ratings": []})
+
+        mock_client = MagicMock()
+        mock_client.get = mock_get
+        with patch("omdb._get_client", return_value=mock_client):
+            first = await enrich_with_omdb("tt0000001")
+            second = await enrich_with_omdb("tt0000001")
+
+        assert first == second == {"imdb_rating": "8.1", "rt_score": None, "rated": "PG"}
+        assert sent == ["tt0000001"]
+        assert omdb._call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_cached_ratings_still_served_after_daily_cap(self):
+        async def mock_get(url, params=None, **kwargs):
+            return _mock_httpx_response({"imdbRating": "7.0", "Ratings": []})
+
+        mock_client = MagicMock()
+        mock_client.get = mock_get
+        with patch("omdb._get_client", return_value=mock_client):
+            await enrich_with_omdb("tt0000001")
+            omdb._call_count = omdb.OMDB_DAILY_LIMIT
+            assert (await enrich_with_omdb("tt0000001"))["imdb_rating"] == "7.0"
+            assert await enrich_with_omdb("tt0000002") == {}
+
+    @pytest.mark.asyncio
+    async def test_failures_are_not_cached(self):
+        responses = [
+            _mock_httpx_response({}, status_code=500),
+            _mock_httpx_response({"imdbRating": "6.0", "Ratings": []}),
+        ]
+
+        async def mock_get(url, params=None, **kwargs):
+            return responses.pop(0)
+
+        mock_client = MagicMock()
+        mock_client.get = mock_get
+        with patch("omdb._get_client", return_value=mock_client):
+            assert await enrich_with_omdb("tt0000001") == {}
+            assert (await enrich_with_omdb("tt0000001"))["imdb_rating"] == "6.0"

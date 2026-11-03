@@ -25,11 +25,13 @@ and reports back. Trusted, perceptive, personal.
   → index into WORD_LIST → today's word. Rotates at UTC midnight.
   The seed lives only in .env (gitignored) and Job's memory/password manager.
   The backend checks the word (POST /verify-password, X-Hugin-Password
-  header). Rollout in progress — see Key logic — password.
+  header), enforced in production — see Key logic — password.
 - Claude API is the mood interpreter — free-text in, TMDb params out (JSON).
-  Uses Haiku 4.5 (claude-haiku-4-5-20251001) — mood interpretation is a
-  lightweight structured extraction task that doesn't require Sonnet.
-  Structured outputs (output_config.format json_schema) constrain the reply.
+  Uses Haiku 5.5 (claude-haiku-5-5) at effort "low" — mood interpretation
+  is a lightweight structured extraction task. Chosen from a 10-mood
+  comparison (Nov 2026): same picks and speed (~1.8s) as Haiku 4.5 at ~1/7
+  the cost, no refusals. Structured outputs (output_config.format
+  json_schema) constrain the reply.
 - TMDb is the primary data source (Discover endpoint), called via the
   alternate domain api.tmdb.org — from the Pi's network, TLS handshakes to
   api.themoviedb.org fail ~60% of the time (hostname-based filtering on
@@ -38,6 +40,9 @@ and reports back. Trusted, perceptive, personal.
 - All external calls are async with explicit timeouts: TMDb/OMDb 10s per
   request (TMDb connect 5s), Claude 15s with 1 retry (the SDK default is
   10 minutes).
+- In-memory caches (cache.py TTLCache, empty after a restart): TMDb movie
+  details 7 days, OMDb ratings 3 days, TMDb keyword ids 30 days, Claude's
+  mood interpretations 1 hour. Sizes shown on GET /health.
   TMDb detail calls are sequential (reuses one TLS connection), OMDb
   enrichment is parallel via asyncio.gather. TMDb 429s and 5xx errors
   retry once. Enrichment failures never fail the whole request. If TMDb
@@ -46,6 +51,7 @@ and reports back. Trusted, perceptive, personal.
 ## Repo structure
 hugin/
 ├── main.py              ← FastAPI app, routes, CORS, error middleware, logging
+├── cache.py             ← Small in-memory TTL cache used by mood/tmdb/omdb
 ├── mood.py              ← Claude API calls + output validation (interpret_mood, interpret_group_mood)
 ├── tmdb.py              ← TMDb Discover with fallback steps + movie detail (timeouts, 429/5xx retry)
 ├── omdb.py              ← OMDb enrichment by imdb_id over HTTPS (daily cap)
@@ -61,13 +67,14 @@ hugin/
 ├── LEARNINGS.md
 ├── render.yaml          ← Legacy Render config (Render service is suspended)
 ├── CONTRIBUTING.md
-└── tests/               ← 183 tests, all external APIs mocked (pytest tests/ -v)
+└── tests/               ← 227 tests, all external APIs mocked (pytest tests/ -v)
     ├── conftest.py      ← Shared fixtures (mock movies, params, responses)
     ├── test_password.py ← Password derivation, validation, grace period (21 tests)
-    ├── test_mood.py     ← Claude reply parsing, validation, request shape (35 tests)
-    ├── test_tmdb.py     ← Discover queries, fallback steps, paging, retries, outages, detail (46 tests)
-    ├── test_omdb.py     ← OMDb enrichment, error handling, daily cap (19 tests)
-    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, password gate, logging (62 tests)
+    ├── test_cache.py    ← TTL cache expiry and eviction (7 tests)
+    ├── test_mood.py     ← Claude reply parsing, validation, model choice, refusal fallback, cache (42 tests)
+    ├── test_tmdb.py     ← Search steps, keywords, gem slot, ranked paging, retries, outages, detail (70 tests)
+    ├── test_omdb.py     ← OMDb enrichment, error handling, daily cap, cache (22 tests)
+    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, password gate, logging (65 tests)
 
 ## API endpoints
 - GET/HEAD /               → health check (HEAD for uptime monitors)
@@ -107,17 +114,19 @@ TMDb Discover object merged with TMDb Detail and OMDb enrichment:
   popularity, video (from TMDb Discover)
 - imdb_id, runtime, tagline, genres[] (genre name strings, from TMDb Detail)
 - imdb_rating, rt_score, rated (from OMDb)
+- is_gem: true for a hidden-gem pick (the last solo card, or every card
+  when the user asked for gems), false otherwise
 
 Detail and OMDb fields are missing for a movie whose lookup failed.
 
-The gem_mode flag is returned at the response level in params_used, not
-per-movie — all movies in a gem_mode request used the hidden gem filter.
+params_used.gem_mode means "the user asked for hidden gems" (every pick is
+a gem); per-movie is_gem is what the badge should use.
 
 ## Key logic — mood interpreter (mood.py)
 Claude receives a system prompt defining it as Hugin, a movie mood
 interpreter. Structured outputs force a JSON object with:
 - genres: TMDb genre IDs (integers, from the 18 known IDs)
-- keywords: keyword strings
+- keywords: keyword strings, matched to real TMDb keyword tags (see below)
 - vote_floor: float (5.5–8.0)
 - gem_mode: boolean (true ONLY for explicit hidden/obscure/underrated requests, not mood words like "dark" or "tense")
 - sort_by: "vote_average.desc" or "popularity.desc"
@@ -133,36 +142,70 @@ position.
 Group mode sends all moods together in ONE Claude call and asks Claude to
 find the intersection that satisfies everyone.
 
-## Key logic — search fallback steps (tmdb.py)
+Haiku 5.5 runs safety filters that can decline a request (stop_reason
+"refusal") and has no server-side fallback, so a declined mood is retried
+once on Haiku 4.5 (claude-haiku-4-5-20251001, without the effort setting,
+which 4.5 rejects). max_tokens is 1024 because 5.5's thinking counts toward
+it. The same mood text (case/spacing ignored) reuses its interpretation for
+an hour, so "try again" pages through one consistent search and skips Claude.
+
+The keyword instruction in the prompt was left as it was on purpose: TMDb
+has tone tags too ("feel good", "heartwarming", "brutal", "slow burn"), and
+in the comparison the original wording matched more real tags (28/34, all
+10 moods) than a version asking for concrete nouns only.
+
+## Key logic — keywords (tmdb.py)
+Claude's keywords are looked up with TMDb /search/keyword; only exact tag
+matches count (case, spaces and hyphens ignored, so "mind bending" matches
+"mind-bending"). Lookups are cached for 30 days, misses included; a failed
+lookup just drops that keyword. Matched ids are pipe-joined into
+with_keywords ("any of these tags").
+
+## Key logic — search steps (tmdb.py)
 TMDb reads with_genres="35,18" as "every genre" and "35|18" as "any genre".
-discover_movies() tries progressively looser searches and tops up the
-results (deduped by id) until it has `limit` films:
-1. Every genre, Claude's vote_floor, vote_count.gte=300
-2. Any genre (only when there are 2+ genres)
-3. Any genre, vote_floor lowered to 6.0, vote_count.gte=100
-The user's filters are never dropped. Usually step 1 is enough (one call).
+Standard picks come from these steps, most specific first:
+1. Every genre + matched keywords, rating ≥ max(vote_floor, 7.0)
+2. Any genre + matched keywords, same rating (only with 2+ genres)
+3. Every genre, Claude's vote_floor
+4. Any genre (only with 2+ genres)
+5. Any genre, vote_floor lowered to 6.0, vote_count.gte=100
+Steps 1–2 only exist when at least one keyword matched. Keyword matches
+need 7.0+ to go first, so a mediocre precise match can't outrank a great
+broader one. All steps: vote_count.gte=300 (except step 5) and
+with_runtime.gte=60 (feature films only — no shorts or music videos).
+The user's filters are never dropped. 300 votes exists because sorting by
+rating with a low vote floor fills the top with films rated 9+ by a few
+dozen people.
 
-vote_count.gte=300 exists because sorting by rating with a low vote floor
-fills the top with obscure films rated 9+ by a few dozen people.
-
-## Key logic — hidden gem filter (tmdb.py)
-When gem_mode is true, a gem search runs before the steps above:
-- vote_count between 150 and 3000
-- vote_average.gte = 7.5
-- with_genres limited to the first genre ID only (widens the result pool)
-- sort_by is whatever Claude chose (not forced)
-- If it finds anything, those results are returned as-is
-- If it finds nothing, params["gem_mode"] is set to False (so params_used
-  is accurate) and the standard steps run
-This surfaces high-quality, low-popularity films the algorithms bury.
+## Key logic — hidden gems (tmdb.py)
+Gem search: vote_count 300–3000, vote_average ≥ 7.5, released at least a
+year ago (new films' early ratings run high), first genre only (keeps the
+pool wide), mood keywords first and then without. sort_by is Claude's.
+At 150 votes, TMDb rated films 8.3 that IMDb rated 4.7 — hence 300.
+- gem_mode (user asked for hidden gems): every pick comes from the gem
+  search, all is_gem=true. If no gem exists, params["gem_mode"] becomes
+  False (so params_used is accurate) and standard picks are returned.
+- Solo mode (gem_slot=True in main.py): 4 standard picks + 1 gem last
+  (is_gem=true). Films that the gem search would find are held back from
+  the standard picks (_gem_rule mirrors the gem query exactly), so the two
+  lists never overlap. If no gem exists, the 5th slot is a standard pick.
+- Group mode: no gem slot.
 
 ## Key logic — paging (tmdb.py)
-- No page given: random page 1–5, or 1–2 when filters or gem_mode are
-  active (narrow searches have few pages).
-- Explicit page: honoured, first wrapped into TMDb's 1–500 range.
-- If a page is past the end of the result set, TMDb's total_pages is used
-  to wrap round: page 7 of a 2-page set becomes page (7-1) % 2 + 1 = 1.
-  So "try again" keeps cycling through real pages.
+`page` means "the page-th batch of films", not a TMDb page. _collect()
+treats a search's steps as one ranked list in which each film counts once
+(the most specific step's films first, then whatever each looser step
+adds). Page 1 starts at the top and each page moves on by the number of
+films shown: `limit` (5 solo, 3 group), but 4 for solo standard picks (the gem takes the 5th slot), and 1 for the
+gem slot. So "try again" (page + 1) shows new films, best matches first,
+until the list is used up; then it wraps round.
+- It walks each step from the top so films shared with earlier steps aren't
+  counted twice. Deep pages (more than 60 films in) jump straight to the
+  right TMDb page instead, accepting the odd repeat.
+- No page given: random page 1–3, or 1–2 when filters or gem_mode are on.
+- Pages cycle after 100.
+- Measured (Nov 2026): 5 presses of "try again" on several moods, including
+  a Korean-only filter, showed no repeats; each press took 1.2–2s.
 
 ## Key logic — request timeouts and retries (tmdb.py, omdb.py, mood.py)
 - TMDb: all calls go through _get(), 10s timeout (5s to connect). On 429, waits for
@@ -261,15 +304,15 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 - Filters sent: original_language null for "Any"; min_year null, or 2010
   when the switch is on; exclude_animation always a boolean
 - page: a new search picks a random page 1–3; "Try again" sends the
-  previous page + 1 (the backend wraps past the end)
+  previous page + 1 (see Key logic — paging)
 - Errors: shows the JSON "error" field, otherwise "Something went wrong.
   Try again."; network errors and 5xx retry once after 3s ("Retrying...")
 - Movie cards render: poster, title, year, genres, runtime, IMDb rating,
   RT score, hidden gem badge
 - Hidden gem badge: shown when params_used.gem_mode is true, OR on the last
-  card in solo mode. KNOWN MISMATCH: the page copy promises "five films, one
-  hidden gem", but the backend does not put a gem last — the last solo card
-  is badged even when it isn't a gem.
+  card in solo mode. Since batch 3 the backend does put a gem last, so this
+  is right whenever a gem exists; switching the page to read movie.is_gem
+  makes it exact (pending Hugin.tsx change).
 - Group mode: up to 3 people enter moods → 3 shared picks
 - Mobile-first — couch use case, one thumb, under 30 seconds start to pick
 - API host must be https://hugin.job-joseph.com — the old Render URL
@@ -316,8 +359,8 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
     handling, CORS on errors, Claude output validation, input validation
 15. ✅ Audit batch 2 — server-side password check: /verify-password,
     X-Hugin-Password enforced, /password-hash removed, seed rotated
-16. [ ] Audit batch 3 — use Claude's keywords (TMDb keyword IDs), cache
-    detail/OMDb lookups, consider Haiku 5.5
+16. ✅ Audit batch 3 — keywords in search, real 4 + 1 gem with is_gem,
+    ranked paging (no repeats on "try again"), caches, Haiku 5.5
 17. [ ] Behind the Build page at /projects/behind-the-build/hugin
 18. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
 
@@ -390,3 +433,17 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
     Now 15s, 1 retry.
 13. **OMDb over plain HTTP** (API key in cleartext) and a daily cap that
     parallel calls could overshoot. Now HTTPS, counter reserved up front.
+
+## Audit fixes (batch 3, November 2026)
+14. **Claude's keywords were never used** — now matched to TMDb keyword tags
+    and searched first. Heist went from mixed results to The Sting, Rififi,
+    Big Deal on Madonna Street.
+15. **"Five films, one hidden gem" wasn't real** — the page badged the last
+    card regardless. The backend now returns 4 + 1 real gem with is_gem.
+16. **Gem quality** — 150-vote films with inflated TMDb ratings, a music
+    video, brand-new releases. Now 300+ votes, 60+ minutes, 1+ year old.
+17. **"Try again" repeated films** — Claude re-interpreted the mood each
+    time and pages were TMDb pages. Now the interpretation is cached for an
+    hour and pages walk one deduplicated ranking.
+18. **Cost and quota** — Haiku 5.5 (~1/7 the cost), caches for details,
+    ratings and keywords (OMDb calls only for films not seen in 3 days).

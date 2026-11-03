@@ -41,7 +41,7 @@ This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -
 
 ## Tests
 
-Run the full test suite (183 tests, all external APIs mocked):
+Run the full test suite (227 tests, all external APIs mocked):
 
 ```bash
 pytest tests/ -v

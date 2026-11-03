@@ -46,12 +46,12 @@ The old `GET /password-hash` endpoint was removed: its prefix gave the word away
 
 ## Mood-to-params logic (mood.py)
 
-Claude receives a system prompt defining it as Hugin, a movie mood interpreter. Given a mood string, it returns a JSON object. Structured outputs (`output_config.format` with a JSON schema) constrain the reply to this shape:
+Claude (Haiku 5.5 at low effort; a declined request is retried once on Haiku 4.5) receives a system prompt defining it as Hugin, a movie mood interpreter. Given a mood string, it returns a JSON object. Structured outputs (`output_config.format` with a JSON schema) constrain the reply to this shape:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | genres | int[] | TMDb genre IDs (e.g. 35 for Comedy) |
-| keywords | string[] | TMDb keyword strings, 2-4 words each |
+| keywords | string[] | TMDb keyword strings, 2-4 words each (matched to real TMDb tags; unmatched ones are dropped) |
 | vote_floor | float | Minimum vote average, range 5.5-8.0 |
 | gem_mode | boolean | True ONLY for explicit hidden/obscure/underrated requests — not mood words like "dark" or "tense" |
 | sort_by | string | "vote_average.desc" or "popularity.desc" |
@@ -68,34 +68,31 @@ Group mode sends all moods together in a single Claude call and asks Claude to f
 
 ## Search logic (tmdb.py)
 
-TMDb reads `with_genres=35,18` as "every genre" and `35|18` as "any genre". Requiring every genre is the most faithful match, but narrow combinations can leave only a handful of films (horror + romance rated 7.5+ is 2 films). So discover_movies() tops up results, deduped by id, from progressively looser searches until it has enough:
+Claude's keywords are matched to real TMDb keyword tags (`/search/keyword`, exact match ignoring case, spaces and hyphens; cached 30 days). TMDb reads `with_genres=35,18` as "every genre" and `35|18` as "any genre"; matched keyword ids are always pipe-joined. Standard picks come from these steps, most specific first:
 
-| Step | Genres | vote_average.gte | vote_count.gte |
-|------|--------|------------------|----------------|
-| 1 | every genre (`,`) | vote_floor | 300 |
-| 2 (2+ genres only) | any genre (`\|`) | vote_floor | 300 |
-| 3 | any genre (`\|`) | min(vote_floor, 6.0) | 100 |
+| Step | Genres | Keywords | vote_average.gte | vote_count.gte |
+|------|--------|----------|------------------|----------------|
+| 1 | every genre | matched tags | max(vote_floor, 7.0) | 300 |
+| 2 (2+ genres) | any genre | matched tags | max(vote_floor, 7.0) | 300 |
+| 3 | every genre | — | vote_floor | 300 |
+| 4 (2+ genres) | any genre | — | vote_floor | 300 |
+| 5 | any genre | — | min(vote_floor, 6.0) | 100 |
 
-The user's filters (language, animation, year) are never dropped. Usually step 1 is enough. The 300-vote floor stops rating-sorted results filling up with obscure films rated 9+ by a few dozen people.
+Steps 1–2 only run when a keyword matched. Every step also requires `with_runtime.gte=60` (feature films only). The user's filters (language, animation, year) are never dropped. The 300-vote floor stops rating-sorted results filling up with films rated 9+ by a few dozen people.
 
-## Gem mode logic (tmdb.py)
+## Hidden gems (tmdb.py)
 
-When `gem_mode` is true, a gem search runs before the steps above:
+A gem is a film with 300–3,000 votes, rated 7.5+, released at least a year ago, in the mood's first genre (mood keywords tried first). At 150 votes TMDb's averages were unreliable (8.3 on TMDb, 4.7 on IMDb), and brand-new films' early ratings run high.
 
-| Parameter | Standard | Gem mode |
-|-----------|----------|----------|
-| vote_count.gte | 300 | 150 |
-| vote_count.lte | (none) | 3000 |
-| vote_average.gte | vote_floor | 7.5 |
-| sort_by | from params | from params |
-| with_genres | see search steps | first genre ID only |
-
-If the gem search finds anything, those results are returned. If it finds nothing, `gem_mode` is set to false in `params_used` and the standard search steps run.
+- **Solo mode:** 4 standard picks, then 1 gem last (`is_gem: true`). Gem-quality films are held back from the 4 standard picks, so the two never overlap. If no gem exists, the 5th card is a standard pick.
+- **gem_mode** (the user asked for hidden gems): every pick is a gem. If none exist, `gem_mode` becomes false in `params_used` and standard picks are returned.
+- **Group mode:** no gem slot.
 
 ## Paging (tmdb.py)
 
-- No `page`: random page 1–5, or 1–2 when filters or gem mode are active.
-- Explicit `page`: honoured. It is first wrapped into TMDb's 1–500 range; if it is past the last page of results, it wraps round using TMDb's `total_pages` (page 7 of a 2-page set becomes page 1). So "try again" keeps cycling through pages that exist.
+`page` is the page-th batch of films, not a TMDb page. Each search's steps are treated as one ranked list in which each film counts once — the most specific step's films first. Page 1 starts at the top; each page moves on by the number of films it shows (4 solo standard picks, 1 gem, 3 group, 5 gem_mode). So "try again" with `page + 1` shows new films, best matches first, and only wraps round when the list is used up. With no `page`, a random page 1–3 is used (1–2 with filters or gem mode). Measured: five presses of "try again" on several moods, including a Korean-only filter, showed no repeats.
+
+Claude's interpretation of a mood is cached for an hour, so "try again" pages through the same search and skips the Claude call.
 
 ## Endpoint contracts
 
@@ -161,7 +158,8 @@ All optional fields are optional. Filters pass directly to TMDb Discover, bypass
 }
 ```
 
-- Returns up to 5 results in solo mode (fewer only if even the loosest search step finds fewer)
+- Returns up to 5 results in solo mode: 4 picks, then a hidden gem last (fewer only if even the loosest search step finds fewer)
+- Each result has `is_gem` (true for the gem slot, or for every pick when the user asked for hidden gems)
 - `params_used` shows what Claude interpreted so the frontend can display it
 - If a movie's TMDb detail or OMDb lookup fails, the movie is still returned without those fields
 
@@ -212,7 +210,7 @@ Built as a page inside job-joseph.com (existing React app), not a separate Lovab
 - **Password gate** — first screen. Single text input. Checked by `POST /verify-password`; the word is saved in localStorage and sent as `X-Hugin-Password`; a 401 re-locks the page.
 - **Primary input** — large free-text mood box. Quick-fill mood chips below (e.g. "cozy rainy day", "intense thriller") as shortcuts, not replacements.
 - **Mobile-first** — designed for the couch use case. One thumb, portrait orientation, under 30 seconds from open to first pick.
-- **Solo mode** — 5 movie cards. Poster, title, year, genres, runtime, IMDb rating, RT score, hidden gem badge. The page copy says "five films, one hidden gem" and badges the last card, but the backend doesn't yet put a gem last (known mismatch).
+- **Solo mode** — 5 movie cards: 4 picks and a hidden gem last. Poster, title, year, genres, runtime, IMDb rating, RT score, hidden gem badge (the page badges the last card; reading `is_gem` would make it exact).
 - **Group mode** — up to 3 people enter moods on the same screen, then 3 shared picks.
 - **Design** — follows existing site conventions (Plus Jakarta Sans, teal primary, orange accent, dark mode).
 - **Skeleton loading states** — not spinners. Cards render as grey shapes that fill in.

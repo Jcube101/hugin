@@ -1,11 +1,35 @@
+import copy
 import json
+import logging
 import math
 import os
 import re
 
 from anthropic import AsyncAnthropic
 
-MODEL = "claude-haiku-4-5-20251001"
+from cache import MISSING, TTLCache
+
+log = logging.getLogger("hugin.mood")
+
+# Haiku 5.5 at low effort: in a 10-mood comparison (Nov 2026) it matched Haiku 4.5's
+# picks and speed (~1.8s) at ~1/7 the cost. Its thinking counts toward max_tokens,
+# hence 1024. It can decline a request (stop_reason "refusal") and has no
+# server-side fallback, so a declined mood is retried once on Haiku 4.5.
+MODEL = "claude-haiku-5-5"
+FALLBACK_MODEL = "claude-haiku-4-5-20251001"
+MAX_TOKENS = 1024
+
+# The same mood text gets the same interpretation for an hour, so "try again"
+# pages through one consistent search (page + 1) and skips a Claude call.
+_cache = TTLCache(ttl=60 * 60, maxsize=500)
+
+
+def cache_size() -> int:
+    return len(_cache)
+
+
+def clear_cache():
+    _cache.clear()
 
 # The SDK default is a 10-minute timeout with 2 retries; a mood lookup should never take that long
 client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=15.0, max_retries=1)
@@ -116,14 +140,36 @@ def _parse_response(text: str) -> dict:
     return _clean_params(json.loads(text))
 
 
-async def _ask_claude(user_content: str) -> dict:
-    response = await client.messages.create(
-        model=MODEL,
-        max_tokens=300,
+async def _call(model: str, user_content: str, effort: str | None):
+    output_config = {"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}}
+    if effort:
+        output_config["effort"] = effort  # Haiku 4.5 rejects the effort setting
+    return await client.messages.create(
+        model=model,
+        max_tokens=MAX_TOKENS,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],
-        output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
+        output_config=output_config,
     )
+
+
+async def _ask_claude(user_content: str) -> dict:
+    key = " ".join(user_content.lower().split())
+    cached = _cache.get(key)
+    if cached is not MISSING:
+        return copy.deepcopy(cached)  # callers may modify params (e.g. gem_mode)
+    params = await _interpret(user_content)
+    _cache.set(key, copy.deepcopy(params))
+    return params
+
+
+async def _interpret(user_content: str) -> dict:
+    response = await _call(MODEL, user_content, effort="low")
+    if response.stop_reason == "refusal":
+        category = getattr(getattr(response, "stop_details", None), "category", None)
+        log.warning("Mood declined by %s (%s); retrying on %s", MODEL, category, FALLBACK_MODEL)
+        response = await _call(FALLBACK_MODEL, user_content, effort=None)
+    # Read the text block by type: replies can start with a thinking block
     text = next((b.text for b in response.content if b.type == "text"), "")
     return _parse_response(text)
 

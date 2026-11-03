@@ -298,3 +298,79 @@ class TestInterpretGroupMood:
         call_args = mock_create.call_args
         content = call_args.kwargs["messages"][0]["content"]
         assert "Person 4" in content
+
+
+class TestModelChoice:
+
+    @pytest.mark.asyncio
+    async def test_uses_haiku_5_5_at_low_effort(self):
+        with patch("mood.client.messages.create", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = _mock_claude_response('{"genres": [35]}')
+            await interpret_mood("funny")
+
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["model"] == "claude-haiku-5-5"
+        assert kwargs["output_config"]["effort"] == "low"
+        assert kwargs["max_tokens"] >= 1024  # thinking counts toward max_tokens
+
+    @pytest.mark.asyncio
+    async def test_refusal_retries_once_on_haiku_4_5_without_effort(self):
+        refusal = MagicMock(stop_reason="refusal", content=[])
+        refusal.stop_details.category = "general_harms"
+        ok = _mock_claude_response('{"genres": [53], "keywords": ["revenge"]}')
+        with patch("mood.client.messages.create", new_callable=AsyncMock, side_effect=[refusal, ok]) as mock_create:
+            result = await interpret_mood("a brutal revenge thriller")
+
+        assert result["genres"] == [53]
+        second = mock_create.call_args_list[1].kwargs
+        assert second["model"] == "claude-haiku-4-5-20251001"
+        assert "effort" not in second["output_config"]
+        assert second["output_config"]["format"]["type"] == "json_schema"
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_call_when_not_refused(self):
+        with patch("mood.client.messages.create", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = _mock_claude_response('{"genres": [35]}')
+            await interpret_mood("funny")
+        assert mock_create.call_count == 1
+
+
+class TestInterpretationCache:
+
+    @pytest.mark.asyncio
+    async def test_same_mood_reuses_interpretation(self):
+        with patch("mood.client.messages.create", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = _mock_claude_response('{"genres": [80], "keywords": ["heist"]}')
+            first = await interpret_mood("A clever heist movie")
+            second = await interpret_mood("  a clever   HEIST movie ")
+        assert first == second
+        assert mock_create.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_different_moods_are_separate(self):
+        with patch("mood.client.messages.create", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = _mock_claude_response('{"genres": [35]}')
+            await interpret_mood("funny")
+            await interpret_mood("sad")
+            await interpret_group_mood(["funny"])
+        assert mock_create.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_callers_cannot_change_the_cached_copy(self):
+        with patch("mood.client.messages.create", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = _mock_claude_response('{"genres": [27], "gem_mode": true}')
+            first = await interpret_mood("hidden gem horror")
+            first["gem_mode"] = False          # discover_movies does this on gem fallback
+            first["genres"].append(35)
+            second = await interpret_mood("hidden gem horror")
+        assert second["gem_mode"] is True
+        assert second["genres"] == [27]
+
+    @pytest.mark.asyncio
+    async def test_failed_interpretation_is_not_cached(self):
+        bad = _mock_claude_response("not json")
+        good = _mock_claude_response('{"genres": [18]}')
+        with patch("mood.client.messages.create", new_callable=AsyncMock, side_effect=[bad, good]):
+            with pytest.raises(ValueError):
+                await interpret_mood("sad")
+            assert (await interpret_mood("sad"))["genres"] == [18]

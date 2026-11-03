@@ -539,3 +539,35 @@ class TestPasswordHashRemoved:
     def test_password_hash_endpoint_gone(self, client):
         # It gave today's word away, and the frontend never used it
         assert client.get("/password-hash").status_code == 404
+
+
+class TestBatch3Wiring:
+
+    def test_solo_asks_for_a_gem_slot_group_does_not(self, client):
+        mock_discover = AsyncMock(return_value=MOCK_MOVIES)
+        with patch("main.interpret_mood", new_callable=AsyncMock, return_value=dict(MOCK_PARAMS)), \
+             patch("main.interpret_group_mood", new_callable=AsyncMock, return_value=dict(MOCK_PARAMS)), \
+             patch("main.discover_movies", mock_discover), \
+             patch("main.get_movie_detail", new_callable=AsyncMock, return_value=MOCK_DETAIL), \
+             patch("main.enrich_with_omdb", new_callable=AsyncMock, return_value=MOCK_OMDB):
+            client.post("/recommend", json={"mood": "fun"})
+            solo = mock_discover.call_args.kwargs
+            client.post("/recommend-group", json={"moods": ["fun"]})
+            group = mock_discover.call_args.kwargs
+
+        assert solo.get("gem_slot") is True
+        assert not group.get("gem_slot")
+        assert group.get("limit") == 3
+
+    def test_is_gem_flag_reaches_the_response(self, client):
+        movies = [{**m, "is_gem": i == 4} for i, m in enumerate(MOCK_MOVIES)]
+        with patch("main.interpret_mood", new_callable=AsyncMock, return_value=dict(MOCK_PARAMS)), \
+             patch("main.discover_movies", new_callable=AsyncMock, return_value=movies), \
+             patch("main.get_movie_detail", new_callable=AsyncMock, return_value=MOCK_DETAIL), \
+             patch("main.enrich_with_omdb", new_callable=AsyncMock, return_value=MOCK_OMDB):
+            results = client.post("/recommend", json={"mood": "fun"}).json()["results"]
+        assert [m["is_gem"] for m in results] == [False, False, False, False, True]
+
+    def test_health_reports_cache_sizes(self, client):
+        cache = client.get("/health").json()["cache"]
+        assert set(cache) == {"movie_details", "keywords", "omdb_ratings", "mood_interpretations"}

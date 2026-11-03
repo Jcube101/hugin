@@ -15,8 +15,11 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+import mood
 from mood import interpret_mood, interpret_group_mood
+import tmdb
 from tmdb import TMDbUnavailable, discover_movies, get_movie_detail
+import omdb
 from omdb import enrich_with_omdb, get_omdb_call_count
 from password import is_valid_password
 
@@ -172,7 +175,15 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "omdb": get_omdb_call_count()}
+    return {
+        "status": "ok",
+        "omdb": get_omdb_call_count(),
+        "cache": {
+            **tmdb.cache_sizes(),
+            "omdb_ratings": omdb.cache_size(),
+            "mood_interpretations": mood.cache_size(),
+        },
+    }
 
 
 @app.post("/verify-password")
@@ -188,7 +199,10 @@ async def verify_password(request: Request, body: PasswordCheck):
 async def recommend(request: Request, req: MoodRequest):
     _check_password(request)
     params = await interpret_mood(req.mood)
-    movies = await discover_movies(params, filters=req.as_filters(), page=req.page or None)
+    # Solo: 4 picks plus a hidden gem in the last slot (the page badges it)
+    movies = await discover_movies(
+        params, filters=req.as_filters(), page=req.page or None, gem_slot=True
+    )
     return {"results": await enrich_all(movies), "params_used": params}
 
 
