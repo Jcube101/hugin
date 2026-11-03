@@ -279,7 +279,7 @@ Built as a page inside job-joseph.com (existing React app), not a separate Lovab
 - **Password gate** — first screen. Single text input. Checked by `POST /verify-password`; the word is saved in localStorage and sent as `X-Hugin-Password`; a 401 re-locks the page.
 - **Primary input** — large free-text mood box. Quick-fill mood chips below (e.g. "cozy rainy day", "intense thriller") as shortcuts, not replacements.
 - **Mobile-first** — designed for the couch use case. One thumb, portrait orientation, under 30 seconds from open to first pick.
-- **Solo mode** — 5 movie cards: 4 picks and a hidden gem last. Poster, title, year, genres, runtime, IMDb rating, RT score, hidden gem badge (the page badges the last card; reading `is_gem` would make it exact).
+- **Solo mode** — 5 movie cards: 4 picks and a hidden gem last. Poster, title, year, genres, runtime, IMDb rating, RT score, hidden gem badge on films with `is_gem: true`.
 - **Group mode** — up to 3 people enter moods on the same screen, then 3 shared picks.
 - **Design** — follows existing site conventions (Plus Jakarta Sans, teal primary, orange accent, dark mode).
 - **Skeleton loading states** — not spinners. Cards render as grey shapes that fill in.

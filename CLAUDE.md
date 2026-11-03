@@ -121,7 +121,7 @@ TMDb Discover object merged with TMDb Detail and OMDb enrichment:
 Detail and OMDb fields are missing for a movie whose lookup failed.
 
 params_used.gem_mode means "the user asked for hidden gems" (every pick is
-a gem); per-movie is_gem is what the badge should use.
+a gem); per-movie is_gem is what the page's badge uses.
 
 ## Key logic — mood interpreter (mood.py)
 Claude receives a system prompt defining it as Hugin, a movie mood
@@ -311,10 +311,8 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
   Try again."; network errors and 5xx retry once after 3s ("Retrying...")
 - Movie cards render: poster, title, year, genres, runtime, IMDb rating,
   RT score, hidden gem badge
-- Hidden gem badge: shown when params_used.gem_mode is true, OR on the last
-  card in solo mode. Since batch 3 the backend does put a gem last, so this
-  is right whenever a gem exists; switching the page to read movie.is_gem
-  makes it exact (pending Hugin.tsx change).
+- Hidden gem badge: shown when movie.is_gem is true (since Nov 2026; it
+  used to badge the last solo card)
 - Group mode: up to 3 people enter moods → 3 shared picks
 - Mobile-first — couch use case, one thumb, under 30 seconds start to pick
 - Behind the Build write-up: HuginDetail.tsx (/projects/behind-the-build/hugin),
@@ -366,8 +364,7 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
     ranked paging (no repeats on "try again"), caches, Haiku 5.5
 17. ✅ Behind the Build page at /projects/behind-the-build/hugin
 18. ✅ Add Hugin card to GitHub profile README (Jcube101/Jcube101)
-19. [ ] Optional: Hugin.tsx badges from movie.is_gem (today it badges the
-    last solo card, which is right whenever a gem exists)
+19. ✅ Hugin.tsx badges from movie.is_gem
 
 ## Deployment
 - Hosted on the Raspberry Pi (jobpi) as systemd service `hugin.service`:

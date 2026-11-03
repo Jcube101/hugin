@@ -1,10 +1,10 @@
 # Hugin — Roadmap
 
-Hugin is live at [job-joseph.com/projects/hugin](https://job-joseph.com/projects/hugin), with its backend on the Pi at https://hugin.job-joseph.com. The three audit batches are done; what's left is one small frontend change and a list of ideas.
+Hugin is live at [job-joseph.com/projects/hugin](https://job-joseph.com/projects/hugin), with its backend on the Pi at https://hugin.job-joseph.com. The three audit batches and their follow-ups are done; what's left is the list of ideas below.
 
 ## Next
 
-- **Hugin.tsx: badge from `is_gem`** (optional) — the page badges the last solo card, which is right whenever a gem exists; reading the backend's per-movie `is_gem` makes it exact.
+Nothing planned right now — pick from the ideas below.
 
 ## Ideas (later / maybe)
 
@@ -79,6 +79,7 @@ Hugin is live at [job-joseph.com/projects/hugin](https://job-joseph.com/projects
 ### Write-ups — November 2026
 - **Behind the Build page** — /projects/behind-the-build/hugin (HuginDetail.tsx), updated for the server-side gate
 - **GitHub profile card** — Hugin added to the GitHub profile README (Jcube101/Jcube101)
+- **Hidden gem badge reads `is_gem`** — Hugin.tsx badges exactly the films the backend marks as gems, instead of the last solo card
 
 ## Security and hardening
 
