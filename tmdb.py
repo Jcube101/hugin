@@ -12,6 +12,7 @@ log = logging.getLogger("hugin.tmdb")
 TMDB_BASE = "https://api.tmdb.org/3"
 TMDB_MAX_PAGE = 500          # TMDb rejects page numbers above this
 REQUEST_TIMEOUT = 10.0
+CONNECT_TIMEOUT = 5.0        # a healthy connect takes ~0.3s; fail fast if TMDb is down
 RETRY_STATUSES = {500, 502, 503, 504}
 MAX_RETRY_AFTER = 5.0        # cap on how long a 429 can make us wait
 
@@ -24,6 +25,10 @@ RELAXED_MIN_VOTES = 100      # last-resort search for very narrow mood + filter 
 RELAXED_RATING = 6.0
 
 _client = None
+
+
+class TMDbUnavailable(Exception):
+    """TMDb couldn't be reached (timeouts, refused or reset connections)."""
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -49,13 +54,14 @@ async def _get(path: str, params: dict) -> httpx.Response:
     """GET from TMDb, retrying once on a 429 or 5xx. Raises httpx errors."""
     url = f"{TMDB_BASE}{path}"
     params = {"api_key": os.getenv("TMDB_API_KEY"), **params}
-    r = await _get_client().get(url, params=params, timeout=REQUEST_TIMEOUT)
+    timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+    r = await _get_client().get(url, params=params, timeout=timeout)
     if r.status_code == 429:
         await asyncio.sleep(_retry_after_seconds(r))
-        r = await _get_client().get(url, params=params, timeout=REQUEST_TIMEOUT)
+        r = await _get_client().get(url, params=params, timeout=timeout)
     elif r.status_code in RETRY_STATUSES:
         await asyncio.sleep(2)
-        r = await _get_client().get(url, params=params, timeout=REQUEST_TIMEOUT)
+        r = await _get_client().get(url, params=params, timeout=timeout)
     r.raise_for_status()
     return r
 
@@ -105,26 +111,24 @@ def _standard_steps(base: dict, genres: list, floor: float) -> list[dict]:
     return steps
 
 
-async def _discover(query: dict, page: int) -> dict | None:
-    """One Discover call. Returns None if TMDb can't be reached."""
+async def _discover(query: dict, page: int) -> dict:
+    """One Discover call. Raises TMDbUnavailable if TMDb can't be reached."""
     try:
         r = await _get("/discover/movie", {**query, "page": page})
     except httpx.TransportError as e:  # timeouts, connection resets, refused connections
         log.warning("TMDb discover unreachable: %s", type(e).__name__)
-        return None
+        raise TMDbUnavailable from e
     return r.json()
 
 
 async def _discover_page(query: dict, page: int) -> list:
     """Results for `page`, wrapping round to a page that exists if it's past the end."""
     data = await _discover(query, page)
-    if data is None:
-        return []
     results = data.get("results", [])
     total_pages = min(data.get("total_pages") or 0, TMDB_MAX_PAGE)
     if not results and 0 < total_pages < page:
         data = await _discover(query, (page - 1) % total_pages + 1)
-        results = (data or {}).get("results", [])
+        results = data.get("results", [])
     return results
 
 
@@ -137,6 +141,10 @@ async def discover_movies(
     params["gem_mode"] is set to False so the response reports what was used.
     Standard mode tops up from progressively looser searches until it has
     `limit` films. The user's filters are never dropped.
+
+    If TMDb becomes unreachable partway, whatever was already found is
+    returned. If nothing was found, TMDbUnavailable is raised so the user
+    is told to try again rather than shown an empty list.
     """
     filters = filters or {}
     genres = params.get("genres") or []
@@ -167,13 +175,19 @@ async def discover_movies(
         params["gem_mode"] = False
 
     found, seen = [], set()
-    for step in _standard_steps(base, genres, floor):
-        for movie in await _discover_page(step, page):
-            if movie.get("id") not in seen:
-                seen.add(movie.get("id"))
-                found.append(movie)
-        if len(found) >= limit:
-            break
+    try:
+        for step in _standard_steps(base, genres, floor):
+            for movie in await _discover_page(step, page):
+                if movie.get("id") not in seen:
+                    seen.add(movie.get("id"))
+                    found.append(movie)
+            if len(found) >= limit:
+                break
+    except TMDbUnavailable:
+        # Looser searches won't help if TMDb is down, so stop here
+        if not found:
+            raise
+        log.info("TMDb dropped out mid-search; returning %d films found so far", len(found))
     return found[:limit]
 
 

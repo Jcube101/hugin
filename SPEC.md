@@ -194,8 +194,12 @@ Per-IP rate limits via slowapi:
 - Unhandled exceptions return `{"error": "Something went wrong. Please try again."}`
   with status 500 — no stack traces, API keys, or internal details. The
   traceback is logged on the server (API keys redacted).
+- If TMDb can't be reached, the response is 503
+  `{"error": "Couldn't reach the movie database. Please try again in a moment."}`
+  instead of an empty list. If TMDb drops out partway through the search
+  steps, the films already found are returned.
 - The error middleware runs inside CORSMiddleware, so 500 responses keep
-  their CORS headers and the browser can read the message
+  their CORS headers and the browser can read the message (503s do too)
 - Validation errors (422) and rate limits (429) use their own handlers
 - Failed enrichment lookups (TMDb detail, OMDb) never fail the request
 

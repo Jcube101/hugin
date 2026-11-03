@@ -510,12 +510,101 @@ class TestRetries:
         assert len(results) == 5
 
     @pytest.mark.asyncio
-    async def test_discover_connection_reset_returns_empty_list(self):
+    async def test_requests_use_short_connect_timeout(self):
+        timeouts = []
+
         async def mock_get(url, params=None, **kwargs):
-            raise httpx.RemoteProtocolError("connection reset")
+            timeouts.append(kwargs["timeout"])
+            return _mock_httpx_response({"results": _movies(1, 20), "total_pages": 3})
+
+        with patch("tmdb._get_client", return_value=_client_with(mock_get)):
+            await discover_movies({"genres": [35]}, page=1)
+
+        assert timeouts[0].connect == tmdb.CONNECT_TIMEOUT
+        assert timeouts[0].read == tmdb.REQUEST_TIMEOUT
+
+
+class TestTMDbUnreachable:
+
+    @pytest.mark.parametrize("failure", [
+        httpx.RemoteProtocolError("connection reset"),
+        httpx.ConnectError("TLS handshake failed"),
+        httpx.ConnectTimeout("no answer"),
+        httpx.ReadTimeout("slow"),
+    ])
+    @pytest.mark.asyncio
+    async def test_raises_instead_of_returning_empty_list(self, failure):
+        async def mock_get(url, params=None, **kwargs):
+            raise failure
+
+        with patch("tmdb._get_client", return_value=_client_with(mock_get)):
+            with pytest.raises(tmdb.TMDbUnavailable):
+                await discover_movies({"genres": [35, 18]})
+
+    @pytest.mark.asyncio
+    async def test_stops_after_first_unreachable_call(self):
+        # Looser searches won't help if TMDb is down — don't make the user wait for them
+        calls = []
+
+        async def mock_get(url, params=None, **kwargs):
+            calls.append(params)
+            raise httpx.ConnectError("down")
+
+        with patch("tmdb._get_client", return_value=_client_with(mock_get)):
+            with pytest.raises(tmdb.TMDbUnavailable):
+                await discover_movies({"genres": [35, 18]})
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_partial_results_if_tmdb_drops_out_midway(self):
+        async def mock_get(url, params=None, **kwargs):
+            if "," in params["with_genres"]:
+                return _mock_httpx_response({"results": _movies(1, 2), "total_pages": 1})
+            raise httpx.ConnectError("down")
+
+        with patch("tmdb._get_client", return_value=_client_with(mock_get)):
+            results = await discover_movies({"genres": [27, 10749]}, page=1)
+
+        assert [m["id"] for m in results] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_reached_but_empty_still_returns_empty_list(self):
+        # TMDb answered: there genuinely are no matches. That's not an outage.
+        async def mock_get(url, params=None, **kwargs):
+            return _mock_httpx_response({"results": [], "total_pages": 0})
 
         with patch("tmdb._get_client", return_value=_client_with(mock_get)):
             assert await discover_movies({"genres": [35]}) == []
+
+    @pytest.mark.asyncio
+    async def test_unreachable_gem_search_raises_without_falling_back(self):
+        calls = []
+
+        async def mock_get(url, params=None, **kwargs):
+            calls.append(params)
+            raise httpx.ConnectError("down")
+
+        params = {"genres": [53], "gem_mode": True}
+        with patch("tmdb._get_client", return_value=_client_with(mock_get)):
+            with pytest.raises(tmdb.TMDbUnavailable):
+                await discover_movies(params)
+
+        assert len(calls) == 1
+        assert params["gem_mode"] is True  # not "no gems found" — TMDb never answered
+
+    @pytest.mark.asyncio
+    async def test_unreachable_wrap_round_call_raises(self):
+        responses = [_mock_httpx_response({"results": [], "total_pages": 2})]
+
+        async def mock_get(url, params=None, **kwargs):
+            if responses:
+                return responses.pop(0)
+            raise httpx.ConnectError("down")
+
+        with patch("tmdb._get_client", return_value=_client_with(mock_get)):
+            with pytest.raises(tmdb.TMDbUnavailable):
+                await discover_movies({"genres": [35]}, page=7)
 
     @pytest.mark.asyncio
     async def test_discover_bad_api_key_still_raises(self):

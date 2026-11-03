@@ -36,10 +36,12 @@ and reports back. Trusted, perceptive, personal.
   the path). Don't switch it back without re-testing from the Pi.
 - OMDb is the enrichment layer (RT score, IMDb rating) via shared imdb_id
 - All external calls are async with explicit timeouts: TMDb/OMDb 10s per
-  request, Claude 15s with 1 retry (the SDK default is 10 minutes).
+  request (TMDb connect 5s), Claude 15s with 1 retry (the SDK default is
+  10 minutes).
   TMDb detail calls are sequential (reuses one TLS connection), OMDb
   enrichment is parallel via asyncio.gather. TMDb 429s and 5xx errors
-  retry once. Enrichment failures never fail the whole request.
+  retry once. Enrichment failures never fail the whole request. If TMDb
+  Discover is unreachable, the API returns 503 "try again" (not an empty list).
 
 ## Repo structure
 hugin/
@@ -59,13 +61,13 @@ hugin/
 ├── LEARNINGS.md
 ├── render.yaml          ← Legacy Render config (Render service is suspended)
 ├── CONTRIBUTING.md
-└── tests/               ← 142 tests, all external APIs mocked (pytest tests/ -v)
+└── tests/               ← 155 tests, all external APIs mocked (pytest tests/ -v)
     ├── conftest.py      ← Shared fixtures (mock movies, params, responses)
     ├── test_password.py ← Password derivation and hash tests (10 tests)
     ├── test_mood.py     ← Claude reply parsing, validation, request shape (35 tests)
-    ├── test_tmdb.py     ← Discover queries, fallback steps, paging, retries, detail (37 tests)
+    ├── test_tmdb.py     ← Discover queries, fallback steps, paging, retries, outages, detail (46 tests)
     ├── test_omdb.py     ← OMDb enrichment, error handling, daily cap (19 tests)
-    └── test_main.py     ← Endpoint tests: validation, CORS on errors, logging (41 tests)
+    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, logging (45 tests)
 
 ## API endpoints
 - GET/HEAD /               → health check (HEAD for uptime monitors)
@@ -161,11 +163,17 @@ This surfaces high-quality, low-popularity films the algorithms bury.
   So "try again" keeps cycling through real pages.
 
 ## Key logic — request timeouts and retries (tmdb.py, omdb.py, mood.py)
-- TMDb: all calls go through _get(), 10s timeout. On 429, waits for
+- TMDb: all calls go through _get(), 10s timeout (5s to connect). On 429, waits for
   Retry-After (capped at 5s; HTTP-date values fall back to 2s) and retries
   once. On 500/502/503/504, waits 2s and retries once.
-  - Discover: network errors (timeouts, connection resets) return [] for
-    that step; other HTTP errors (e.g. 401 bad key) raise → 500.
+  - Discover: network errors (timeouts, refused/reset connections) raise
+    TMDbUnavailable and the search stops — looser searches can't help if
+    TMDb is down. If earlier steps already found films, those are returned;
+    otherwise main.py turns it into 503 {"error": "Couldn't reach the movie
+    database. Please try again in a moment."}. An empty list only ever
+    means TMDb answered with no matches. Worst case (TMDb not answering at
+    all) is ~15s: 5s connect timeout × 3 transport attempts.
+  - Discover, other HTTP errors (e.g. 401 bad key): raise → 500.
   - Detail: any failure returns {}.
 - OMDb: HTTPS, 10s timeout. Any failure, or a {"Response": "False"} reply,
   returns {}. No retries.
@@ -252,8 +260,8 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 - **Error middleware** — catch_unhandled_errors() returns
   `{"error": "Something went wrong. Please try again."}` with status 500
   and logs the traceback. It is registered before CORSMiddleware so it runs
-  inside it — error responses keep their CORS headers. Validation (422)
-  and rate limits (429) keep their own handlers.
+  inside it — error responses keep their CORS headers. Validation (422),
+  rate limits (429) and TMDb outages (503) keep their own handlers.
 - **Logging** — "hugin.*" loggers at INFO, everything else at WARNING
   (httpx logs request URLs containing API keys at INFO). A redacting
   formatter strips api_key/apikey values from every log line.

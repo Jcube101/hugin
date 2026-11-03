@@ -10,7 +10,7 @@ Hugin is a mood-based movie recommendation API. You describe how you feel in fre
 - **OMDb API** — Rotten Tomatoes scores, IMDb ratings, content ratings
 - **httpx** — async HTTP client with connection pooling
 - **slowapi** — rate limiting (10/min solo, 5/min group per IP)
-- **pytest** / **pytest-asyncio** — 142 tests, all external APIs mocked
+- **pytest** / **pytest-asyncio** — 155 tests, all external APIs mocked
 
 ## Live deployment
 
@@ -184,6 +184,7 @@ Response shape is the same as `/recommend`, with 3 results instead of 5.
 
 - `422` — invalid input (Pydantic validation details in the body)
 - `429` — rate limit exceeded
+- `503` — `{"error": "Couldn't reach the movie database. Please try again in a moment."}` when TMDb can't be reached. An empty `results` list only ever means TMDb found no matches.
 - `500` — `{"error": "Something went wrong. Please try again."}`. The traceback goes to the server log, never to the client. CORS headers are kept so the browser can read the message.
 
 ## Running Tests

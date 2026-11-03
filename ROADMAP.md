@@ -44,6 +44,8 @@
   - /docs and /openapi.json off in production; HEAD / for uptime monitors
   - Pinned requirements, separate requirements-dev.txt
   - Tests: 79 → 142
+- **TMDb via api.tmdb.org** — api.themoviedb.org failed TLS ~60% of the time from the Pi's network
+- **TMDb outages return 503 "try again"** instead of an empty list; search stops at the first unreachable call; connect timeout 5s (worst case ~15s, was ~90s). Tests: 155
 
 ## Next
 

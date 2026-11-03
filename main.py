@@ -16,7 +16,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from mood import interpret_mood, interpret_group_mood
-from tmdb import discover_movies, get_movie_detail
+from tmdb import TMDbUnavailable, discover_movies, get_movie_detail
 from omdb import enrich_with_omdb, get_omdb_call_count
 from password import get_today_hash
 
@@ -53,10 +53,20 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
+@app.exception_handler(TMDbUnavailable)
+async def tmdb_unavailable(request: Request, exc: TMDbUnavailable):
+    # Not a bug in Hugin, so no traceback: tmdb.py has already logged the cause
+    log.warning("TMDb unreachable; returned 503 for %s", request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={"error": "Couldn't reach the movie database. Please try again in a moment."},
+    )
+
+
 # Registered before CORSMiddleware so it runs *inside* it: crash responses then
 # still carry CORS headers, and the browser shows the message instead of a
-# misleading CORS error. Validation (422) and rate-limit (429) errors have
-# their own handlers and never reach this.
+# misleading CORS error. Validation (422), rate-limit (429) and TMDb-down (503)
+# errors have their own handlers and never reach this.
 @app.middleware("http")
 async def catch_unhandled_errors(request: Request, call_next):
     try:

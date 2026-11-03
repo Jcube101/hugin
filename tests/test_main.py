@@ -408,3 +408,33 @@ class TestEnrichmentFailures:
 
         assert r.status_code == 200
         assert [m["title"] for m in r.json()["results"]] == [m["title"] for m in MOCK_MOVIES]
+
+
+class TestTMDbUnavailable:
+
+    def _post_with_tmdb_down(self, path, body):
+        from tmdb import TMDbUnavailable
+        c = TestClient(app, raise_server_exceptions=False)
+        with patch("main.interpret_mood", new_callable=AsyncMock, return_value=dict(MOCK_PARAMS)), \
+             patch("main.interpret_group_mood", new_callable=AsyncMock, return_value=dict(MOCK_PARAMS)), \
+             patch("main.discover_movies", new_callable=AsyncMock, side_effect=TMDbUnavailable()):
+            return c.post(path, json=body, headers={"Origin": "https://job-joseph.com"})
+
+    @pytest.mark.parametrize("path, body", [
+        ("/recommend", {"mood": "fun"}),
+        ("/recommend-group", {"moods": ["fun", "sad"]}),
+    ])
+    def test_returns_503_with_try_again_message(self, path, body):
+        r = self._post_with_tmdb_down(path, body)
+        assert r.status_code == 503
+        assert r.json() == {"error": "Couldn't reach the movie database. Please try again in a moment."}
+
+    def test_503_keeps_cors_header(self):
+        r = self._post_with_tmdb_down("/recommend", {"mood": "fun"})
+        assert r.headers.get("access-control-allow-origin") == "https://job-joseph.com"
+
+    def test_logged_as_warning_not_crash(self, caplog):
+        self._post_with_tmdb_down("/recommend", {"mood": "fun"})
+        messages = [r.message for r in caplog.records]
+        assert any("TMDb unreachable" in m for m in messages)
+        assert not any("Unhandled error" in m for m in messages)
