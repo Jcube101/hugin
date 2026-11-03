@@ -7,7 +7,7 @@ import os
 import re
 from typing import Annotated, List
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
@@ -18,7 +18,22 @@ from slowapi.util import get_remote_address
 from mood import interpret_mood, interpret_group_mood
 from tmdb import TMDbUnavailable, discover_movies, get_movie_detail
 from omdb import enrich_with_omdb, get_omdb_call_count
-from password import get_today_hash
+from password import get_today_hash, is_valid_password
+
+# Fail fast: without a seed the password gate can't work
+if not os.getenv("HUGIN_SEED"):
+    raise RuntimeError("HUGIN_SEED is not set — add it to .env")
+
+# --- Password gate -------------------------------------------------------------
+# The frontend sends the typed word in this header on every recommendation call.
+# Enforcement is off until the frontend sends it; then set HUGIN_REQUIRE_PASSWORD=1
+# in .env and restart. That also retires /password-hash.
+PASSWORD_HEADER = "X-Hugin-Password"
+REQUIRE_PASSWORD = os.getenv("HUGIN_REQUIRE_PASSWORD") == "1"
+
+
+class PasswordRequired(Exception):
+    """The request needs today's word and didn't have it."""
 
 # --- Logging -----------------------------------------------------------------
 # Hugin's own loggers ("hugin.*") log at INFO. Everything else stays at WARNING,
@@ -51,6 +66,14 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(PasswordRequired)
+async def password_required(request: Request, exc: PasswordRequired):
+    return JSONResponse(
+        status_code=401,
+        content={"error": str(exc) or "Enter today's word to continue."},
+    )
 
 
 @app.exception_handler(TMDbUnavailable)
@@ -131,6 +154,17 @@ class GroupMoodRequest(Filters):
     moods: List[Annotated[str, Field(min_length=1, max_length=500)]] = Field(min_length=1, max_length=4)
 
 
+class PasswordCheck(BaseModel):
+    password: str = Field(min_length=1, max_length=100)
+
+
+def _check_password(request: Request):
+    # Called at the top of rate-limited endpoints (not as a dependency), so wrong
+    # guesses count toward the rate limit and never reach Claude.
+    if REQUIRE_PASSWORD and not is_valid_password(request.headers.get(PASSWORD_HEADER)):
+        raise PasswordRequired()
+
+
 # --- Routes ----------------------------------------------------------------------
 @app.api_route("/", methods=["GET", "HEAD"])
 def root():
@@ -142,15 +176,26 @@ def health():
     return {"status": "ok", "omdb": get_omdb_call_count()}
 
 
+@app.post("/verify-password")
+@limiter.limit("10/minute")
+async def verify_password(request: Request, body: PasswordCheck):
+    if not is_valid_password(body.password):
+        raise PasswordRequired("That's not today's word.")
+    return {"ok": True}
+
+
 @app.get("/password-hash")
 def password_hash():
-    # Returns today's hash only — never the seed or plain password
+    # Legacy: gives today's word away (see password.py). Retired once enforcement is on.
+    if REQUIRE_PASSWORD:
+        raise HTTPException(status_code=404)
     return {"hash": get_today_hash()}
 
 
 @app.post("/recommend")
 @limiter.limit("10/minute")
 async def recommend(request: Request, req: MoodRequest):
+    _check_password(request)
     params = await interpret_mood(req.mood)
     movies = await discover_movies(params, filters=req.as_filters(), page=req.page or None)
     return {"results": await enrich_all(movies), "params_used": params}
@@ -159,6 +204,7 @@ async def recommend(request: Request, req: MoodRequest):
 @app.post("/recommend-group")
 @limiter.limit("5/minute")
 async def recommend_group(request: Request, req: GroupMoodRequest):
+    _check_password(request)
     params = await interpret_group_mood(req.moods)
     movies = await discover_movies(params, limit=3, filters=req.as_filters(), page=req.page or None)
     return {"results": await enrich_all(movies), "params_used": params}

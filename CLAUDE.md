@@ -24,8 +24,8 @@ and reports back. Trusted, perceptive, personal.
 - Password gate is deterministic: SHA-256(HUGIN_SEED + today's UTC date)
   → index into WORD_LIST → today's word. Rotates at UTC midnight.
   The seed lives only in .env (gitignored) and Job's memory/password manager.
-  KNOWN ISSUE: the /password-hash prefix is enough to derive the word (see
-  Key logic — password). Fix planned as audit batch 2.
+  The backend checks the word (POST /verify-password, X-Hugin-Password
+  header). Rollout in progress — see Key logic — password.
 - Claude API is the mood interpreter — free-text in, TMDb params out (JSON).
   Uses Haiku 4.5 (claude-haiku-4-5-20251001) — mood interpretation is a
   lightweight structured extraction task that doesn't require Sonnet.
@@ -61,18 +61,19 @@ hugin/
 ├── LEARNINGS.md
 ├── render.yaml          ← Legacy Render config (Render service is suspended)
 ├── CONTRIBUTING.md
-└── tests/               ← 155 tests, all external APIs mocked (pytest tests/ -v)
+└── tests/               ← 189 tests, all external APIs mocked (pytest tests/ -v)
     ├── conftest.py      ← Shared fixtures (mock movies, params, responses)
-    ├── test_password.py ← Password derivation and hash tests (10 tests)
+    ├── test_password.py ← Password derivation, validation, grace period (24 tests)
     ├── test_mood.py     ← Claude reply parsing, validation, request shape (35 tests)
     ├── test_tmdb.py     ← Discover queries, fallback steps, paging, retries, outages, detail (46 tests)
     ├── test_omdb.py     ← OMDb enrichment, error handling, daily cap (19 tests)
-    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, logging (45 tests)
+    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, password gate, logging (65 tests)
 
 ## API endpoints
 - GET/HEAD /               → health check (HEAD for uptime monitors)
 - GET  /health             → OMDb daily call count, limit, and date
-- GET  /password-hash      → returns today's SHA-256 hash prefix (see known issue)
+- POST /verify-password    → {password: str} → 200 {ok: true} | 401 {error} (10/min per IP)
+- GET  /password-hash      → legacy hash prefix; 404 once HUGIN_REQUIRE_PASSWORD=1
 - POST /recommend          → {mood: str, ...filters} → up to 5 enriched movie objects
 - POST /recommend-group    → {moods: str[], ...filters} → up to 3 enriched movie objects
 
@@ -96,6 +97,8 @@ OMDB_API_KEY=
 ANTHROPIC_API_KEY=
 HUGIN_SEED=          ← secret phrase, never commit this
 HUGIN_DOCS=          ← optional; "1" turns on /docs locally
+HUGIN_REQUIRE_PASSWORD= ← "1" = recommendation endpoints require the
+                           X-Hugin-Password header; also retires /password-hash
 
 ## Movie result object shape
 Each result returned by /recommend or /recommend-group contains the full
@@ -187,21 +190,37 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 
 ## Key logic — password (password.py)
 - get_today_password() → plain word, for Job's local use only, NEVER via API
-- get_today_hash() → 16-char hex prefix served by /password-hash.
-  KNOWN ISSUE: its first 8 hex chars are exactly the bytes used to pick the
-  word, so hash + public WORD_LIST = today's password. The backend also
-  doesn't check the password. Planned fix (audit batch 2, needs a
-  Hugin.tsx change): frontend sends the word in a header, backend checks
-  it, /password-hash removed, seed removed from Hugin.tsx and rotated.
+- is_valid_password(candidate) → True for today's word, or yesterday's in
+  the first hour after UTC midnight (GRACE_PERIOD). Ignores case and
+  surrounding spaces (phone keyboards capitalise). Compares with
+  hmac.compare_digest on bytes (str compare_digest rejects non-ASCII).
+- HUGIN_SEED is required: password.py raises and main.py refuses to start
+  without it (the old "default-seed" fallback is gone).
+- get_today_hash() → legacy 16-char hex prefix for /password-hash. Its first
+  8 hex chars are exactly the bytes that pick the word, so it gives the word
+  away. Retired when HUGIN_REQUIRE_PASSWORD=1.
+- Gate on the API (main.py):
+  - POST /verify-password {password} → 200 {"ok": true} or 401
+    {"error": "That's not today's word."}. 10/min per IP.
+  - /recommend and /recommend-group check the X-Hugin-Password header when
+    HUGIN_REQUIRE_PASSWORD=1 → 401 {"error": "Enter today's word to
+    continue."}. The check runs inside the rate-limited endpoint, so wrong
+    guesses count toward the limit and never reach Claude.
+- Rollout (audit batch 2):
+  - Phase A ✅ backend accepts the header and serves /verify-password;
+    enforcement off, so the old frontend keeps working.
+  - Phase B — Hugin.tsx calls /verify-password, sends the header, re-shows
+    the gate on 401, and drops the hardcoded seed + local derivation.
+  - Phase C — set HUGIN_REQUIRE_PASSWORD=1, rotate HUGIN_SEED (the old one
+    is in the site's public bundle/history), optionally enlarge WORD_LIST
+    (safe once the frontend no longer derives the word), then delete
+    /password-hash and get_today_hash().
 - To get today's password locally: `python password.py` from the hugin/
   directory (or the `hugin-password` alias on the Pi). This calls
-  load_dotenv() before reading HUGIN_SEED.
-  DO NOT use `python -c "from password import ..."` — that skips
-  load_dotenv() and silently falls back to "default-seed", producing
-  the wrong password.
-- Frontend independently derives the word using the same seed (hardcoded
-  in Hugin.tsx — Lovable personal plan does not support build secrets)
-  and compares against user input
+  load_dotenv() before reading HUGIN_SEED; without it the script now
+  fails loudly instead of printing a wrong word.
+- Until Phase B, the frontend derives the word itself using the seed
+  hardcoded in Hugin.tsx (Lovable personal plan has no build secrets)
 - WORD_LIST has 29 evocative single words (ember, dusk, reel, etc.)
 
 ## Pain points this solves
@@ -283,8 +302,8 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 13. ✅ Moved hosting to the Pi — https://hugin.job-joseph.com
 14. ✅ Audit batch 1 — search fallback steps, quality floor, error
     handling, CORS on errors, Claude output validation, input validation
-15. [ ] Audit batch 2 — server-side password check, remove /password-hash
-    (needs Hugin.tsx change)
+15. [ ] Audit batch 2 — server-side password check (Phase A ✅ backend;
+    Phase B Hugin.tsx; Phase C enforce + rotate seed)
 16. [ ] Audit batch 3 — use Claude's keywords (TMDb keyword IDs), cache
     detail/OMDb lookups, consider Haiku 5.5
 17. [ ] Behind the Build page at /projects/behind-the-build/hugin

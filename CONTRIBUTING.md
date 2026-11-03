@@ -37,11 +37,11 @@ uvicorn main:app --reload
 python password.py
 ```
 
-This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -c "from password import get_today_password; ..."` — that skips `load_dotenv()` and silently produces the wrong password (falls back to `"default-seed"`).
+This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -c "from password import get_today_password; ..."` — that skips `load_dotenv()`, so it fails with "HUGIN_SEED is not set" (it used to silently print a wrong word).
 
 ## Tests
 
-Run the full test suite (155 tests, all external APIs mocked):
+Run the full test suite (189 tests, all external APIs mocked):
 
 ```bash
 pytest tests/ -v

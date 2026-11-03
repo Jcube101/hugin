@@ -49,7 +49,7 @@
 
 ## Next
 
-- **Audit batch 2 — real password gate** (needs a Hugin.tsx change). The `/password-hash` prefix is enough to derive today's word, the seed is in the public frontend bundle, and the backend never checks the password. Plan: frontend sends the typed word in a header; backend compares it with `hmac.compare_digest` (accepting yesterday's word briefly around UTC midnight); delete `/password-hash`; remove the seed from Hugin.tsx; rotate `HUGIN_SEED`; fail at startup if the seed is missing instead of using "default-seed".
+- **Audit batch 2 — real password gate** — Phase A ✅ (backend: `/verify-password`, `X-Hugin-Password` header check behind `HUGIN_REQUIRE_PASSWORD`, seed required, 1-hour midnight grace). Remaining: Phase B (Hugin.tsx), Phase C (enforce, rotate seed, retire `/password-hash`). The `/password-hash` prefix is enough to derive today's word, the seed is in the public frontend bundle, and the backend never checks the password. Plan: frontend sends the typed word in a header; backend compares it with `hmac.compare_digest` (accepting yesterday's word briefly around UTC midnight); delete `/password-hash`; remove the seed from Hugin.tsx; rotate `HUGIN_SEED`; fail at startup if the seed is missing instead of using "default-seed".
 - **Audit batch 3 — recommendation quality and cost**:
   - Use Claude's keywords — they're generated but never sent to TMDb. Resolve via `/search/keyword` to IDs (cached) and pass `with_keywords` (pipe-joined)
   - Cache TMDb detail and OMDb lookups in memory (the Pi doesn't sleep, so caches persist)

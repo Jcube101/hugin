@@ -10,7 +10,7 @@ Hugin is a mood-based movie recommendation API. You describe how you feel in fre
 - **OMDb API** — Rotten Tomatoes scores, IMDb ratings, content ratings
 - **httpx** — async HTTP client with connection pooling
 - **slowapi** — rate limiting (10/min solo, 5/min group per IP)
-- **pytest** / **pytest-asyncio** — 155 tests, all external APIs mocked
+- **pytest** / **pytest-asyncio** — 189 tests, all external APIs mocked
 
 ## Live deployment
 
@@ -42,6 +42,7 @@ OMDB_API_KEY=your_omdb_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
 HUGIN_SEED=your_secret_seed_phrase
 HUGIN_DOCS=1          # optional: enables /docs locally (off in production)
+HUGIN_REQUIRE_PASSWORD=1   # optional: recommendation calls need the X-Hugin-Password header
 ```
 
 Start the server:
@@ -62,7 +63,7 @@ To get today's password locally via alias anywhere on the pi:
 hugin-password
 ```
 
-This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -c "from password import get_today_password; print(get_today_password())"` — that skips `load_dotenv()` and silently produces the wrong password.
+This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -c "from password import get_today_password; print(get_today_password())"` — that skips `load_dotenv()`, so it fails with "HUGIN_SEED is not set" (it used to silently print a wrong word).
 
 ## API endpoints
 
@@ -90,11 +91,23 @@ curl http://127.0.0.1:8000/health
 {"status": "ok", "omdb": {"date": "2026-05-08", "calls": 42, "limit": 950}}
 ```
 
-### GET /password-hash
+### POST /verify-password
 
-Returns today's SHA-256 hash prefix (rotates daily at UTC midnight). The frontend uses this for its password gate.
+Checks a typed password against today's word (rotates at UTC midnight; yesterday's word still works for the first hour). Case and surrounding spaces are ignored. Rate limited to 10/min per IP.
 
-> **Known issue:** the prefix is enough to work out today's word. Replacing this with a server-side check is planned (see ROADMAP.md).
+```bash
+curl -X POST http://127.0.0.1:8000/verify-password \
+  -H "Content-Type: application/json" \
+  -d '{"password": "ember"}'
+```
+
+`200 {"ok": true}` or `401 {"error": "That's not today's word."}`.
+
+Recommendation requests send the word in an `X-Hugin-Password` header. With `HUGIN_REQUIRE_PASSWORD=1` in `.env`, a missing or wrong header gets `401 {"error": "Enter today's word to continue."}`.
+
+### GET /password-hash (legacy)
+
+Returns today's SHA-256 hash prefix. It gives the word away, so it's being retired: it returns 404 once `HUGIN_REQUIRE_PASSWORD=1`.
 
 ```bash
 curl http://127.0.0.1:8000/password-hash

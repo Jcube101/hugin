@@ -438,3 +438,117 @@ class TestTMDbUnavailable:
         messages = [r.message for r in caplog.records]
         assert any("TMDb unreachable" in m for m in messages)
         assert not any("Unhandled error" in m for m in messages)
+
+
+def _todays_word():
+    from password import get_today_password
+    return get_today_password()
+
+
+class TestVerifyPassword:
+
+    def test_correct_word_ok(self, client):
+        r = client.post("/verify-password", json={"password": _todays_word()})
+        assert r.status_code == 200
+        assert r.json() == {"ok": True}
+
+    def test_capitalised_word_ok(self, client):
+        r = client.post("/verify-password", json={"password": f" {_todays_word().capitalize()} "})
+        assert r.status_code == 200
+
+    def test_wrong_word_401_with_cors(self, client):
+        r = client.post(
+            "/verify-password", json={"password": "definitely-not-it"},
+            headers={"Origin": "https://job-joseph.com"},
+        )
+        assert r.status_code == 401
+        assert r.json() == {"error": "That's not today's word."}
+        assert r.headers.get("access-control-allow-origin") == "https://job-joseph.com"
+
+    @pytest.mark.parametrize("body", [{}, {"password": ""}, {"password": "x" * 101}])
+    def test_invalid_body_422(self, client, body):
+        assert client.post("/verify-password", json=body).status_code == 422
+
+    def test_guessing_is_rate_limited(self, client):
+        statuses = [
+            client.post("/verify-password", json={"password": f"guess{i}"}).status_code
+            for i in range(11)
+        ]
+        assert statuses[:10] == [401] * 10
+        assert statuses[10] == 429
+
+    def test_preflight_allows_password_header(self, client):
+        r = client.options("/recommend", headers={
+            "Origin": "https://job-joseph.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,x-hugin-password",
+        })
+        assert r.status_code == 200
+        assert "x-hugin-password" in r.headers.get("access-control-allow-headers", "").lower()
+
+
+class TestPasswordGateOff:
+    """Phase A: enforcement off, so today's frontend keeps working unchanged."""
+
+    def test_recommend_works_without_header(self, client):
+        mocks = _service_mocks()
+        for m in mocks:
+            m.start()
+        try:
+            assert client.post("/recommend", json={"mood": "fun"}).status_code == 200
+        finally:
+            for m in mocks:
+                m.stop()
+
+    def test_password_hash_still_served(self, client):
+        assert client.get("/password-hash").status_code == 200
+
+
+class TestPasswordGateOn:
+
+    @pytest.fixture(autouse=True)
+    def enforce(self):
+        with patch("main.REQUIRE_PASSWORD", True):
+            yield
+
+    @pytest.mark.parametrize("headers", [{}, {"X-Hugin-Password": "wrong"}, {"X-Hugin-Password": ""}])
+    @pytest.mark.parametrize("path, body", [
+        ("/recommend", {"mood": "fun"}),
+        ("/recommend-group", {"moods": ["fun"]}),
+    ])
+    def test_missing_or_wrong_word_401_before_claude(self, client, path, body, headers):
+        with patch("main.interpret_mood", new_callable=AsyncMock) as solo, \
+             patch("main.interpret_group_mood", new_callable=AsyncMock) as group:
+            r = client.post(path, json=body, headers={"Origin": "https://job-joseph.com", **headers})
+        assert r.status_code == 401
+        assert r.json() == {"error": "Enter today's word to continue."}
+        assert r.headers.get("access-control-allow-origin") == "https://job-joseph.com"
+        solo.assert_not_called()
+        group.assert_not_called()
+
+    @pytest.mark.parametrize("path, body", [
+        ("/recommend", {"mood": "fun"}),
+        ("/recommend-group", {"moods": ["fun"]}),
+    ])
+    def test_correct_word_gets_results(self, client, path, body):
+        mocks = _service_mocks()
+        for m in mocks:
+            m.start()
+        try:
+            r = client.post(path, json=body, headers={"X-Hugin-Password": _todays_word().upper()})
+        finally:
+            for m in mocks:
+                m.stop()
+        assert r.status_code == 200
+        assert len(r.json()["results"]) > 0
+
+    def test_wrong_guesses_count_toward_rate_limit(self, client):
+        statuses = [
+            client.post("/recommend", json={"mood": "x"}, headers={"X-Hugin-Password": "guess"}).status_code
+            for _ in range(11)
+        ]
+        assert statuses[:10] == [401] * 10
+        assert statuses[10] == 429
+
+    def test_password_hash_retired(self, client):
+        assert client.get("/password-hash").status_code == 404

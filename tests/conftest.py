@@ -1,4 +1,13 @@
+import os
+
 import pytest
+
+# Pin settings before main.py imports and calls load_dotenv(), which never
+# overrides variables already set. Tests then behave the same whatever the
+# real .env contains (e.g. after HUGIN_REQUIRE_PASSWORD=1 goes live).
+os.environ["HUGIN_SEED"] = "test-seed"
+os.environ["HUGIN_REQUIRE_PASSWORD"] = "0"
+os.environ["HUGIN_DOCS"] = "0"
 
 
 @pytest.fixture

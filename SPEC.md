@@ -40,7 +40,9 @@ Hugin is gated by a daily password that rotates at UTC midnight:
 3. `integer % 29` indexes into WORD_LIST (29 words: ember, dusk, reel, etc.)
 4. The resulting word is today's password
 
-The API exposes a 16-character hash prefix via `GET /password-hash` — never the seed or the plain password. **Known issue:** the first 8 hex characters of that prefix are exactly the bytes used to pick the word, so the prefix plus the public word list is enough to work out today's password. The backend also doesn't check the password itself. A server-side check is planned (ROADMAP.md, audit batch 2). The frontend independently derives the word using the same seed (hardcoded directly in Hugin.tsx — Lovable personal plan does not support build secrets, so `VITE_HUGIN_SEED` is not read from environment variables) and compares against user input client-side.
+The backend checks the password: `POST /verify-password` for the gate, and an `X-Hugin-Password` header on every recommendation call (enforced when `HUGIN_REQUIRE_PASSWORD=1`). Yesterday's word is accepted for the first hour after UTC midnight; case and spaces are ignored. Wrong guesses are rate limited and never reach Claude.
+
+The legacy `GET /password-hash` prefix gave the word away (its first 8 hex characters are the bytes that pick it), so it is retired once enforcement is on. Until the frontend switches over, the frontend independently derives the word using the same seed (hardcoded directly in Hugin.tsx — Lovable personal plan does not support build secrets, so `VITE_HUGIN_SEED` is not read from environment variables) and compares against user input client-side.
 
 ## Mood-to-params logic (mood.py)
 
