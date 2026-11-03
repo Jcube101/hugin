@@ -16,14 +16,16 @@ pip install -r requirements-dev.txt   # runtime deps + pytest
 
 ## Environment variables
 
-You need a `.env` file with four keys (plus optional `HUGIN_DOCS=1` to enable `/docs` locally):
+You need a `.env` file with four keys. Optional: `HUGIN_DOCS=1` enables `/docs` locally, and `HUGIN_REQUIRE_PASSWORD=1` makes recommendation calls require the `X-Hugin-Password` header (it's on in production).
 
 | Variable | Source |
 |----------|--------|
 | `TMDB_API_KEY` | [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) |
 | `OMDB_API_KEY` | [omdbapi.com/apikey.aspx](https://www.omdbapi.com/apikey.aspx) |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) |
-| `HUGIN_SEED` | Any secret string (used for daily password generation) |
+| `HUGIN_SEED` | Any long random string, e.g. `python -c 'import secrets; print(secrets.token_urlsafe(32))'` (used for daily password generation) |
+
+Never copy the production seed into tests, docs or the frontend. The tests set their own seed (see `tests/conftest.py`).
 
 ## Running the server
 
@@ -54,10 +56,11 @@ To test manually with curl:
 ```bash
 curl -X POST http://127.0.0.1:8000/recommend \
   -H "Content-Type: application/json" \
+  -H "X-Hugin-Password: $(python password.py)" \
   -d '{"mood": "something funny but not dumb"}'
 ```
 
-Note: the server has rate limits (10/min for `/recommend`, 5/min for `/recommend-group`).
+The password header only matters when `HUGIN_REQUIRE_PASSWORD=1`. The server has per-IP rate limits: 10/min for `/recommend`, 5/min for `/recommend-group`, 10/min for `/verify-password`.
 
 ## Deploying
 

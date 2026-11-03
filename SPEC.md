@@ -11,7 +11,48 @@ Hugin solves this by turning a free-text mood description into a curated shortli
 1. **Decision fatigue** — too many options, no clear starting point. Hugin returns exactly 5 picks (solo) or 3 picks (group), not a scrollable grid.
 2. **Recommendations ignore mood** — genre dropdowns can't capture "something cozy but not boring" or "I want to feel unsettled." Free text can.
 3. **No group watch solution** — no existing tool takes 3 people's moods and finds the intersection. Hugin's group mode does exactly this.
-4. **Hidden gems stay hidden** — algorithms push popular content. Hugin's gem mode (vote_count.lte=3000, vote_average.gte=7.5) surfaces high-quality films that never trend.
+4. **Hidden gems stay hidden** — algorithms push popular content. Every solo search ends with a hidden gem (300–3,000 votes, rated 7.5+, out for at least a year), and asking for "hidden gems" makes every pick one.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    U["Browser<br/>job-joseph.com/projects/hugin<br/>(Hugin.tsx)"]
+    CF["Cloudflare tunnel<br/>hugin.job-joseph.com"]
+
+    subgraph PI["Raspberry Pi: hugin.service (uvicorn, port 8004)"]
+        API["main.py<br/>FastAPI: CORS, rate limits,<br/>password check, errors"]
+        PW["password.py<br/>today's word"]
+        MOOD["mood.py<br/>mood to search params"]
+        TMDB["tmdb.py<br/>keywords, search steps,<br/>gem slot, paging"]
+        OMDB["omdb.py<br/>ratings"]
+        CACHE[("cache.py<br/>in-memory caches")]
+    end
+
+    CLAUDE["Claude API<br/>Haiku 5.5<br/>(Haiku 4.5 if declined)"]
+    TMDBAPI["TMDb API<br/>api.tmdb.org"]
+    OMDBAPI["OMDb API"]
+
+    U -- "HTTPS + X-Hugin-Password" --> CF
+    CF --> API
+    API --> PW
+    API --> MOOD --> CLAUDE
+    API --> TMDB --> TMDBAPI
+    API --> OMDB --> OMDBAPI
+    MOOD -.-> CACHE
+    TMDB -.-> CACHE
+    OMDB -.-> CACHE
+```
+
+What happens on a solo request (`POST /recommend`):
+
+1. **Gate** — `main.py` checks the rate limit and the `X-Hugin-Password` header against today's word (`password.py`). A wrong word stops here with a 401; Claude is never called.
+2. **Interpret** — `mood.py` asks Claude to turn the mood into search parameters: genres, keywords, a rating floor, sort order and whether the user wants hidden gems. The reply is validated, and the same mood reuses its interpretation for an hour.
+3. **Search** — `tmdb.py` matches the keywords to TMDb tags, then walks the search steps (most specific first) to pick 4 films, and runs the gem search for the 5th.
+4. **Enrich** — TMDb details (runtime, genres, IMDb id) are fetched one after another, then OMDb ratings in parallel. Both are cached, and a failed lookup only loses that film's extras.
+5. **Respond** — the 5 films (each with `is_gem`) and the parameters Claude chose (`params_used`).
+
+Group requests (`POST /recommend-group`) follow the same path with one Claude call for all the moods, and return 3 films with no gem slot. Everything is in-memory: no database, nothing stored about users.
 
 ## Architecture decisions
 
@@ -39,6 +80,8 @@ Hugin is gated by a daily password that rotates at UTC midnight:
 2. First 4 bytes of the hash are converted to an integer
 3. `integer % 29` indexes into WORD_LIST (29 words: ember, dusk, reel, etc.)
 4. The resulting word is today's password
+
+The seed is a long random value that exists only in `.env` on the Pi.
 
 The backend checks the password: `POST /verify-password` for the gate, and an `X-Hugin-Password` header on every recommendation call (enforced in production via `HUGIN_REQUIRE_PASSWORD=1`). Yesterday's word is accepted for the first hour after UTC midnight; case and spaces are ignored. Wrong guesses are rate limited and never reach Claude.
 
@@ -94,31 +137,65 @@ A gem is a film with 300–3,000 votes, rated 7.5+, released at least a year ago
 
 Claude's interpretation of a mood is cached for an hour, so "try again" pages through the same search and skips the Claude call.
 
-## Endpoint contracts
+## API reference
+
+Base URL: `https://hugin.job-joseph.com` (locally `http://127.0.0.1:8000`). The interactive docs at `/docs` are off in production; set `HUGIN_DOCS=1` to turn them on locally.
+
+| Method | Path | What it does | Rate limit (per IP) |
+|--------|------|--------------|---------------------|
+| GET, HEAD | `/` | Health check (`HEAD` for uptime monitors) | — |
+| GET | `/health` | OMDb usage today and cache sizes | — |
+| POST | `/verify-password` | Checks a typed password against today's word | 10/min |
+| POST | `/recommend` | Solo: 4 picks and a hidden gem | 10/min |
+| POST | `/recommend-group` | Group: 3 shared picks | 5/min (longer prompts) |
+
+Recommendation calls must send today's word in an `X-Hugin-Password` header. This is enforced in production (`HUGIN_REQUIRE_PASSWORD=1`); locally it's only checked if you set that too.
+
+### GET /
+
+```json
+{"status": "Hugin is watching"}
+```
+
+### GET /health
+
+```json
+{"status": "ok",
+ "omdb": {"date": "2026-11-04", "calls": 42, "limit": 950},
+ "cache": {"movie_details": 120, "keywords": 64, "omdb_ratings": 118, "mood_interpretations": 9}}
+```
+
+`omdb.calls` counts real OMDb requests today (UTC); cached ratings don't count. The counter and caches reset when the service restarts.
+
+### POST /verify-password
+
+```json
+{"password": "ember"}
+```
+
+- `200 {"ok": true}` — it's today's word. Yesterday's word also works for the first hour after UTC midnight (5:30 AM IST).
+- `401 {"error": "That's not today's word."}`
+- `422` — empty, or longer than 100 characters
+
+Case and surrounding spaces are ignored, because phone keyboards capitalise.
 
 ### POST /recommend
 
-**Request:**
-```json
-{"mood": "something funny but not dumb"}
+```bash
+curl -X POST https://hugin.job-joseph.com/recommend \
+  -H "Content-Type: application/json" \
+  -H "X-Hugin-Password: <today's word>" \
+  -d '{"mood": "something funny but not dumb"}'
 ```
 
-**Optional filter fields (both endpoints):**
-```json
-{
-  "mood": "feel good",
-  "original_language": "ko",
-  "exclude_animation": true,
-  "min_year": 2010
-}
-```
+**Optional filters** (both recommendation endpoints). They go straight to TMDb Discover, bypassing Claude:
 
-- `original_language`: 2-letter ISO 639-1 code (e.g. "en", "hi", "ko"). Case and spaces are normalised; null, "" and "any" mean no filter
-- `exclude_animation`: boolean, default false — adds `without_genres=16`
-- `min_year`: integer 0–2100 or null — adds `primary_release_date.gte`; 0 means no filter
-- `page`: integer 0–10000 or null — explicit page for "try again" cycling; 0 means random (see Paging)
-
-All optional fields are optional. Filters pass directly to TMDb Discover, bypassing Claude.
+| Field | Type | Effect |
+|-------|------|--------|
+| `original_language` | 2-letter ISO 639-1 code, e.g. `"ko"` | `with_original_language`. Case and spaces are normalised; `null`, `""` and `"any"` mean no filter |
+| `exclude_animation` | boolean, default `false` | `without_genres=16` |
+| `min_year` | integer 0–2100 | `primary_release_date.gte`. `0` or `null` mean no filter |
+| `page` | integer 0–10000 | The page-th batch of results (see Paging): send `page + 1` for "try again". `0` or `null` pick a random start |
 
 **Response:**
 ```json
@@ -145,7 +222,8 @@ All optional fields are optional. Filters pass directly to TMDb Discover, bypass
       "genres": ["Comedy", "War"],
       "imdb_rating": "8.4",
       "rt_score": "92%",
-      "rated": "G"
+      "rated": "G",
+      "is_gem": false
     }
   ],
   "params_used": {
@@ -158,50 +236,41 @@ All optional fields are optional. Filters pass directly to TMDb Discover, bypass
 }
 ```
 
-- Returns up to 5 results in solo mode: 4 picks, then a hidden gem last (fewer only if even the loosest search step finds fewer)
-- Each result has `is_gem` (true for the gem slot, or for every pick when the user asked for hidden gems)
-- `params_used` shows what Claude interpreted so the frontend can display it
-- If a movie's TMDb detail or OMDb lookup fails, the movie is still returned without those fields
+- Up to 5 results: 4 picks, then a hidden gem last (fewer only if even the loosest search step finds fewer).
+- Each result merges the TMDb Discover object, TMDb details (`imdb_id`, `runtime`, `tagline`, `genres`) and OMDb ratings (`imdb_rating`, `rt_score`, `rated`). If a detail or rating lookup fails, the film is still returned without those fields.
+- `is_gem` is true for the gem slot, or for every pick when the user asked for hidden gems.
+- `params_used` shows what Claude interpreted, so the page can display it. `gem_mode` there means "the user asked for hidden gems".
 
 ### POST /recommend-group
 
-**Request:**
 ```json
 {"moods": ["something scary", "something romantic", "anything with good acting"]}
 ```
 
-**Response:** Same shape as /recommend, but returns 3 results.
+Same filters and response shape as `/recommend`, but 3 results and no hidden-gem slot (`is_gem` is false unless the group asked for hidden gems).
 
-### Input validation
+### Validation
 
-Both endpoints share a Pydantic `Filters` base model:
-- `mood`: min 1, max 500 characters
-- `moods`: min 1, max 4 items, each min 1 / max 500 characters
-- `original_language`: 2-letter code (see above)
-- `min_year`: 0–2100; `page`: 0–10000
-- Invalid inputs return 422 with Pydantic validation details
+Both recommendation endpoints share a Pydantic `Filters` model:
+- `mood`: 1–500 characters
+- `moods`: 1–4 items, each 1–500 characters
+- filters as in the table above
 
-### Rate limiting
+Invalid input returns 422 with Pydantic's validation details.
 
-Per-IP rate limits via slowapi:
-- `/recommend`: 10 requests per minute
-- `/recommend-group`: 5 requests per minute (stricter because group
-  prompts are longer)
-- Exceeding the limit returns 429 Too Many Requests
+### Errors
 
-### Error handling
+| Status | Body | When |
+|--------|------|------|
+| 401 | `{"error": "Enter today's word to continue."}` | A recommendation call without today's word (checked before Claude is called) |
+| 401 | `{"error": "That's not today's word."}` | A wrong word sent to `/verify-password` |
+| 422 | Pydantic validation details | Invalid input |
+| 429 | `{"error": "Rate limit exceeded: 10 per 1 minute"}` | Over the rate limit |
+| 500 | `{"error": "Something went wrong. Please try again."}` | Anything unexpected. The traceback is logged on the server with API keys redacted; nothing internal reaches the client |
+| 503 | `{"error": "Couldn't reach the movie database. Please try again in a moment."}` | TMDb can't be reached |
 
-- Unhandled exceptions return `{"error": "Something went wrong. Please try again."}`
-  with status 500 — no stack traces, API keys, or internal details. The
-  traceback is logged on the server (API keys redacted).
-- If TMDb can't be reached, the response is 503
-  `{"error": "Couldn't reach the movie database. Please try again in a moment."}`
-  instead of an empty list. If TMDb drops out partway through the search
-  steps, the films already found are returned.
-- The error middleware runs inside CORSMiddleware, so 500 responses keep
-  their CORS headers and the browser can read the message (503s do too)
-- Validation errors (422) and rate limits (429) use their own handlers
-- Failed enrichment lookups (TMDb detail, OMDb) never fail the request
+- Every error response keeps its CORS headers, so the page can read the message.
+- An empty `results` list only ever means TMDb answered and found no matches. If TMDb drops out partway through a search, the films already found are returned.
 
 ## Frontend (in the main job-joseph.com repo)
 
@@ -214,6 +283,6 @@ Built as a page inside job-joseph.com (existing React app), not a separate Lovab
 - **Group mode** — up to 3 people enter moods on the same screen, then 3 shared picks.
 - **Design** — follows existing site conventions (Plus Jakarta Sans, teal primary, orange accent, dark mode).
 - **Skeleton loading states** — not spinners. Cards render as grey shapes that fill in.
-- **"Try again"** — re-runs the same mood and filters with the previous `page` + 1 (a new search starts on a random page from 1–3). The backend wraps any page round to pages that exist.
-- **API target** — calls https://hugin.job-joseph.com directly (the old Render URL is suspended).
+- **"Try again"** — re-runs the same mood and filters with the previous `page` + 1 (a new search starts on a random page from 1–3), so each press shows the next films in the ranking (see Paging).
+- **API target** — calls https://hugin.job-joseph.com directly.
 - **Seed handling** — none. The page has no seed; the backend checks the word.

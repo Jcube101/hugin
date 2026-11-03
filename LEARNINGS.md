@@ -1,5 +1,7 @@
 # Hugin — Learning Log
 
+Entries are in the order they happened and describe the code at that time. Where a later change replaced the fix, the entry ends with an **Update** note pointing to what happens now.
+
 ## The httpx connection storm
 
 This was the most surprising bug. Each function in `tmdb.py` and `omdb.py` created its own `httpx.AsyncClient` inside an `async with` block — seemed clean, seemed right. But when `asyncio.gather` fired 5 `get_movie_detail` calls concurrently, that meant 5 brand-new TLS handshakes hitting TMDb's CDN (CloudFront) at the same instant. CloudFront started resetting connections with `WinError 10054`.
@@ -39,6 +41,8 @@ This ended up being barely slower in practice. The TMDb sequential calls take ad
 
 The broader lesson: `asyncio.gather` everything is not always the right move. Think about what each external service can handle and whether connection reuse gives you most of the speed benefit without the concurrency risk.
 
+> **Update (November 2026):** OMDb now uses HTTPS (plain HTTP sent the API key unencrypted). The parallel OMDb calls are still fine, because they share one pooled client. TMDb is now called at `api.tmdb.org`; see "When TCP connects but TLS doesn't, suspect the hostname".
+
 ## The load_dotenv CLI trap (password.py)
 
 `get_today_password()` reads `HUGIN_SEED` via `os.getenv()` with a fallback to `"default-seed"`. If you call it without `load_dotenv()` first — e.g., via `python -c "from password import get_today_password; print(get_today_password())"` — the `.env` file is never loaded, `os.getenv("HUGIN_SEED")` returns `None`, and the function silently falls back to `"default-seed"`. The password it produces is valid but wrong — it doesn't match what the frontend expects, because the frontend uses the real seed.
@@ -63,6 +67,8 @@ The lesson: a global exception handler in FastAPI is a catch-all in the literal 
 
 The broader point: stack traces should never reach the client in a production API. They leak internal paths, library versions, and sometimes env var names. A global handler is the last line of defense, but it needs to be surgically scoped so it doesn't break the framework's own error semantics.
 
+> **Update (November 2026):** the isinstance re-raise turned out to be dead code: those exceptions have their own handlers, which run first. The global handler was replaced by a middleware that also keeps CORS headers and logs the traceback. See "Error responses need CORS headers too".
+
 ## Page state sync: random isn't "try again"
 
 The "try again" button re-queried the API, but `discover_movies()` picked a random TMDb page each time (`random.randint(1, 3)`). This meant "try again" sometimes returned the same page, and the user saw identical results — or it jumped to a page they'd already seen. There was no way for the frontend to say "I've seen page 2, give me page 3."
@@ -70,6 +76,8 @@ The "try again" button re-queried the API, but `discover_movies()` picked a rand
 The fix was adding an optional `page` parameter to both endpoints. When the frontend sends `page`, the backend uses it directly instead of rolling the dice. The frontend can now increment the page on each "try again" tap, guaranteeing fresh results every time. When `page` is omitted (first load), the backend still randomizes — but now across a wider range (1–5 instead of 1–3) for more variety on the initial query.
 
 The lesson: randomization is fine for a first impression, but any "give me something different" interaction needs deterministic pagination the client controls. If the client can't tell the server what it's already seen, the server can't avoid repeating itself.
+
+> **Update (November 2026):** `page` now means "the page-th batch of films" from one deduplicated ranking, not a TMDb page, and the mood's interpretation is cached for an hour. See "'Try again' needs one ranking, not pages of several searches".
 
 ## Gem mode over-triggering
 
@@ -93,6 +101,8 @@ I also added a fallback for gem_mode specifically: if the query returns zero res
 
 The lesson: any feature that narrows a result set (filters, niche modes, strict thresholds) needs to account for pagination. A page range that works for an unfiltered query of 10,000 results will overshoot a filtered query of 50. When you add filters, audit every place in the code that assumes "there are enough pages."
 
+> **Update (November 2026):** page capping was replaced first by wrap-around using TMDb's `total_pages`, then by the ranked list, which never requests a page that doesn't exist. See "'Try again' needs one ranking, not pages of several searches".
+
 ## Per-request timeouts vs client-level timeouts
 
 The shared `AsyncClient` in both `tmdb.py` and `omdb.py` was initialized with `timeout=15.0` at the client level. This works as a default, but it's invisible at the call site — a reader scanning `await client.get(url, params=query)` has no idea there's a timeout at all. It also means every call shares the same budget, which isn't always right: a TMDb Discover call that fans out to CDN might deserve more time than an OMDb lookup over plain HTTP.
@@ -102,6 +112,8 @@ The fix was adding explicit `timeout=10.0` to every `.get()` call. The per-reque
 The more important change was handling timeout failures gracefully. Before, a timeout would bubble up as an unhandled `httpx.TimeoutException`, which the global error handler would catch and return as a generic 500. Now, timeouts in `discover_movies()` return `[]` and in `get_movie_detail()` / `enrich_with_omdb()` return `{}`. The user might get fewer results or missing ratings, but they get a response instead of an error.
 
 The lesson: client-level timeouts are a safety net; per-request timeouts are documentation. Use both. And when an external API timeout doesn't represent a fatal error for the user's request, catch it and degrade gracefully rather than failing the whole request.
+
+> **Update (November 2026):** an empty list turned out to be misleading when TMDb was actually down: users saw "no matches". Discover now raises when TMDb can't be reached, and the API answers 503 "Couldn't reach the movie database. Please try again in a moment." Detail and OMDb lookups still return `{}` on failure.
 
 ## TMDb 429 and 5xx retries
 
@@ -160,6 +172,8 @@ The lesson: an LLM's reply is user input with extra steps. A schema guarantees t
 `/password-hash` returned the first 16 hex characters of `SHA-256(seed + date)`, on the assumption that a hash reveals nothing. But the password is chosen from the first 4 bytes of that same hash — which are the first 8 hex characters of the prefix. Anyone could take the public prefix, do `int(prefix[:8], 16) % 29`, and look up the word in the public word list. Confirmed against the live server.
 
 The lesson: hashing isn't hiding if you publish the exact bits your secret is derived from. When something is "safe to expose", trace exactly which bits it shares with the secret. The real fix (audit batch 2) is to check the password on the server so nothing derived from the seed needs to leave it.
+
+> **Update (November 2026):** done. The backend now checks the word (`/verify-password` and the `X-Hugin-Password` header), `/password-hash` is gone, and the seed was rotated to a random value that exists only on the Pi.
 
 ## When TCP connects but TLS doesn't, suspect the hostname
 

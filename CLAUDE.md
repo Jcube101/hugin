@@ -23,8 +23,8 @@ and reports back. Trusted, perceptive, personal.
 - No database, no auth service, no Vercel — intentionally minimal infra
 - Password gate is deterministic: SHA-256(HUGIN_SEED + today's UTC date)
   → index into WORD_LIST → today's word. Rotates at UTC midnight.
-  The seed lives only in .env (gitignored) and Job's memory/password manager.
-  The backend checks the word (POST /verify-password, X-Hugin-Password
+  The seed is a long random value that exists only in .env on the Pi
+  (rotated Nov 2026). The backend checks the word (POST /verify-password, X-Hugin-Password
   header), enforced in production — see Key logic — password.
 - Claude API is the mood interpreter — free-text in, TMDb params out (JSON).
   Uses Haiku 5.5 (claude-haiku-5-5) at effort "low" — mood interpretation
@@ -39,23 +39,23 @@ and reports back. Trusted, perceptive, personal.
 - OMDb is the enrichment layer (RT score, IMDb rating) via shared imdb_id
 - All external calls are async with explicit timeouts: TMDb/OMDb 10s per
   request (TMDb connect 5s), Claude 15s with 1 retry (the SDK default is
-  10 minutes).
+  10 minutes). TMDb detail calls are sequential (reuses one TLS
+  connection), OMDb enrichment is parallel via asyncio.gather. TMDb 429s
+  and 5xx errors retry once. Enrichment failures never fail the whole
+  request. If TMDb Discover is unreachable, the API returns 503 "try
+  again" (not an empty list).
 - In-memory caches (cache.py TTLCache, empty after a restart): TMDb movie
   details 7 days, OMDb ratings 3 days, TMDb keyword ids 30 days, Claude's
   mood interpretations 1 hour. Sizes shown on GET /health.
-  TMDb detail calls are sequential (reuses one TLS connection), OMDb
-  enrichment is parallel via asyncio.gather. TMDb 429s and 5xx errors
-  retry once. Enrichment failures never fail the whole request. If TMDb
-  Discover is unreachable, the API returns 503 "try again" (not an empty list).
 
 ## Repo structure
 hugin/
 ├── main.py              ← FastAPI app, routes, CORS, error middleware, logging
 ├── cache.py             ← Small in-memory TTL cache used by mood/tmdb/omdb
 ├── mood.py              ← Claude API calls + output validation (interpret_mood, interpret_group_mood)
-├── tmdb.py              ← TMDb Discover with fallback steps + movie detail (timeouts, 429/5xx retry)
+├── tmdb.py              ← TMDb search: keywords, search steps, gem slot, ranked paging, movie detail, caches
 ├── omdb.py              ← OMDb enrichment by imdb_id over HTTPS (daily cap)
-├── password.py          ← Deterministic daily password logic (run: python password.py)
+├── password.py          ← Daily word + is_valid_password() (run: python password.py)
 ├── requirements.txt     ← Runtime deps, pinned
 ├── requirements-dev.txt ← + pytest, pytest-asyncio
 ├── .env                 ← Gitignored. Contains all API keys + HUGIN_SEED
@@ -68,7 +68,7 @@ hugin/
 ├── render.yaml          ← Legacy Render config (Render service is suspended)
 ├── CONTRIBUTING.md
 └── tests/               ← 227 tests, all external APIs mocked (pytest tests/ -v)
-    ├── conftest.py      ← Shared fixtures (mock movies, params, responses)
+    ├── conftest.py      ← Shared fixtures; pins env vars and clears caches per test
     ├── test_password.py ← Password derivation, validation, grace period (21 tests)
     ├── test_cache.py    ← TTL cache expiry and eviction (7 tests)
     ├── test_mood.py     ← Claude reply parsing, validation, model choice, refusal fallback, cache (42 tests)
@@ -78,7 +78,7 @@ hugin/
 
 ## API endpoints
 - GET/HEAD /               → health check (HEAD for uptime monitors)
-- GET  /health             → OMDb daily call count, limit, and date
+- GET  /health             → OMDb daily call count/limit/date + cache sizes
 - POST /verify-password    → {password: str} → 200 {ok: true} | 401 {error} (10/min per IP)
 - POST /recommend          → {mood: str, ...filters} → up to 5 enriched movie objects
 - POST /recommend-group    → {moods: str[], ...filters} → up to 3 enriched movie objects
@@ -91,8 +91,9 @@ HUGIN_DOCS=1 to enable /docs and /openapi.json locally.
   spaces are normalised. null, "" and "any" mean no filter.
 - exclude_animation: boolean, default false
 - min_year: integer 0–2100 or null (e.g. 2010). 0 means no filter.
-- page: integer 0–10000 or null — explicit page for "try again" cycling.
-  0 means "pick a random page". Pages past the end wrap round (see Paging).
+- page: integer 0–10000 or null — the page-th batch of results; the
+  frontend sends page + 1 for "try again". 0 or null means "pick a random
+  start" (see Key logic — paging).
 
 Invalid values return 422. Filters pass directly to TMDb Discover
 parameters, bypassing Claude's mood interpretation.
@@ -104,7 +105,7 @@ ANTHROPIC_API_KEY=
 HUGIN_SEED=          ← secret phrase, never commit this
 HUGIN_DOCS=          ← optional; "1" turns on /docs locally
 HUGIN_REQUIRE_PASSWORD= ← "1" = recommendation endpoints require the
-                           X-Hugin-Password header
+                           X-Hugin-Password header ("1" in production)
 
 ## Movie result object shape
 Each result returned by /recommend or /recommend-group contains the full
@@ -196,9 +197,10 @@ At 150 votes, TMDb rated films 8.3 that IMDb rated 4.7 — hence 300.
 treats a search's steps as one ranked list in which each film counts once
 (the most specific step's films first, then whatever each looser step
 adds). Page 1 starts at the top and each page moves on by the number of
-films shown: `limit` (5 solo, 3 group), but 4 for solo standard picks (the gem takes the 5th slot), and 1 for the
-gem slot. So "try again" (page + 1) shows new films, best matches first,
-until the list is used up; then it wraps round.
+films shown: `limit` (5 gem_mode, 3 group), 4 for solo standard picks
+(the gem takes the 5th slot), and 1 for the gem slot. So "try again"
+(page + 1) shows new films, best matches first, until the list is used up;
+then it wraps round.
 - It walks each step from the top so films shared with earlier steps aren't
   counted twice. Deep pages (more than 60 films in) jump straight to the
   right TMDb page instead, accepting the odd repeat.
@@ -315,8 +317,8 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
   makes it exact (pending Hugin.tsx change).
 - Group mode: up to 3 people enter moods → 3 shared picks
 - Mobile-first — couch use case, one thumb, under 30 seconds start to pick
-- API host must be https://hugin.job-joseph.com — the old Render URL
-  (hugin-5i4y.onrender.com) is suspended
+- Behind the Build write-up: HuginDetail.tsx (/projects/behind-the-build/hugin),
+  updated by Job for the server-side gate (Nov 2026)
 
 ## Security
 - **CORS** — locked to `["https://job-joseph.com", "https://preview--job-joseph.lovable.app", "http://localhost:5173"]`.
@@ -324,7 +326,8 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
   CORS only stops other websites calling the API from a browser — it does
   not stop scripts or curl.
 - **Rate limiting** — slowapi with per-IP limits:
-  /recommend: 10 requests/minute, /recommend-group: 5 requests/minute.
+  /recommend: 10 requests/minute, /recommend-group: 5 requests/minute,
+  /verify-password: 10 requests/minute (so guessing the word is slow).
   uvicorn trusts X-Forwarded-For from cloudflared on 127.0.0.1, so limits
   apply to real visitor IPs.
 - **Input validation** — Pydantic models (shared Filters base):
@@ -361,8 +364,10 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
     X-Hugin-Password enforced, /password-hash removed, seed rotated
 16. ✅ Audit batch 3 — keywords in search, real 4 + 1 gem with is_gem,
     ranked paging (no repeats on "try again"), caches, Haiku 5.5
-17. [ ] Behind the Build page at /projects/behind-the-build/hugin
-18. [ ] Add Hugin card to GitHub profile README (Jcube101/Jcube101)
+17. ✅ Behind the Build page at /projects/behind-the-build/hugin
+18. ✅ Add Hugin card to GitHub profile README (Jcube101/Jcube101)
+19. [ ] Optional: Hugin.tsx badges from movie.is_gem (today it badges the
+    last solo card, which is right whenever a gem exists)
 
 ## Deployment
 - Hosted on the Raspberry Pi (jobpi) as systemd service `hugin.service`:
@@ -416,9 +421,10 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 7. **Empty results from AND-ed genres** — comma-joined genres meant "every
    genre"; horror + romance at 7.5 had 2 films on 1 page, so random pages
    2–5 were empty. Fixed with the search fallback steps and total_pages
-   wrap-around.
+   wrap-around (paging later replaced by the ranked list, batch 3).
 8. **Rating sort surfaced junk** — vote_count.gte=50 let 50-vote films
-   rated 9+ dominate. Raised to 300 (gems: 150–3000).
+   rated 9+ dominate. Raised to 300 (gems 150–3000, raised to 300–3000
+   in batch 3).
 9. **Small failures became 500s** — connection resets, a 404 on one movie,
    a date-style Retry-After, Claude adding a sentence around the JSON, or
    page < 1 / > 500 all crashed the whole request. Fixed via _get(),
@@ -434,16 +440,30 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 13. **OMDb over plain HTTP** (API key in cleartext) and a daily cap that
     parallel calls could overshoot. Now HTTPS, counter reserved up front.
 
+## Audit fixes (deploy follow-ups and batch 2, November 2026)
+14. **The Pi couldn't reliably reach TMDb** — TLS handshakes to
+    api.themoviedb.org failed ~60% of the time from the Pi's network
+    (hostname-based filtering). Switched to TMDb's alternate api.tmdb.org.
+15. **TMDb outages looked like "no matches"** — unreachable TMDb returned an
+    empty list. Now 503 "try again", the search stops at the first failed
+    call, and connect times out after 5s (worst case ~15s, was ~90s).
+16. **/password-hash gave today's word away** — its first 8 hex chars are the
+    bytes that pick the word. Removed (the frontend never used it).
+17. **The password gate ran only in the browser** — the seed was hardcoded
+    in Hugin.tsx and also used as a test value on the public GitHub repo, and
+    the API never checked the word. Now /verify-password + X-Hugin-Password
+    enforced on the server, seed rotated, seed required at startup.
+
 ## Audit fixes (batch 3, November 2026)
-14. **Claude's keywords were never used** — now matched to TMDb keyword tags
+18. **Claude's keywords were never used** — now matched to TMDb keyword tags
     and searched first. Heist went from mixed results to The Sting, Rififi,
     Big Deal on Madonna Street.
-15. **"Five films, one hidden gem" wasn't real** — the page badged the last
+19. **"Five films, one hidden gem" wasn't real** — the page badged the last
     card regardless. The backend now returns 4 + 1 real gem with is_gem.
-16. **Gem quality** — 150-vote films with inflated TMDb ratings, a music
+20. **Gem quality** — 150-vote films with inflated TMDb ratings, a music
     video, brand-new releases. Now 300+ votes, 60+ minutes, 1+ year old.
-17. **"Try again" repeated films** — Claude re-interpreted the mood each
+21. **"Try again" repeated films** — Claude re-interpreted the mood each
     time and pages were TMDb pages. Now the interpretation is cached for an
     hour and pages walk one deduplicated ranking.
-18. **Cost and quota** — Haiku 5.5 (~1/7 the cost), caches for details,
+22. **Cost and quota** — Haiku 5.5 (~1/7 the cost), caches for details,
     ratings and keywords (OMDb calls only for films not seen in 3 days).
