@@ -25,27 +25,46 @@
 - **OMDb daily limit protection** — in-memory counter (950/day cap), resets at UTC midnight, exposed via GET /health
 - **CORS updated** — added Lovable preview URL (preview--job-joseph.lovable.app)
 - **Page parameter** — optional `page` field on both endpoints for "try again" cycling
-- **Page capping** — filters or gem_mode cap pages to 1–2; otherwise 1–5
+- **Page capping** — filters or gem_mode cap pages to 1–2; otherwise 1–5 (explicit-page cap since replaced by wrap-around, see audit batch 1)
 - **Gem fallback** — if gem_mode returns empty results, retries with gem_mode disabled
 - **gem_mode prompt tightened** — only triggers for explicit hidden/obscure/underrated requests, not mood words
 - **Request timeouts** — all httpx .get() calls use explicit 10s timeout; timeouts return empty results instead of raising
 - **TMDb retry logic** — 429 (rate limit) retries once after Retry-After header; 500/502/503 retries once after 2s
+- **Moved hosting to the Pi** — systemd `hugin.service` behind the Cloudflare tunnel at https://hugin.job-joseph.com; Render suspended
+- **Audit batch 1** (November 2026):
+  - Search fallback steps — every genre → any genre → lower rating bar, topping up to 5 (or 3) films. Fixes empty results for narrow moods (horror + romance) and group intersections
+  - Quality floor — vote_count.gte raised from 50 to 300 (gems 150–3000) so rating sort stops surfacing 50-vote 9.9s
+  - Page wrap-around using TMDb's total_pages — "try again" no longer collapses to page 2 when filters are on
+  - Enrichment failures (connection resets, 404s, bad JSON) return the movie without extras instead of a 500
+  - One `_get()` helper for TMDb retries; Retry-After capped at 5s and date values handled
+  - Error middleware inside CORS — 500s keep CORS headers and are logged (API keys redacted)
+  - Claude: structured outputs, strict validation of the reply, 15s timeout with 1 retry
+  - Input validation for page, min_year and original_language (empty values still mean "no filter")
+  - OMDb over HTTPS; daily cap can't be overshot by parallel calls
+  - /docs and /openapi.json off in production; HEAD / for uptime monitors
+  - Pinned requirements, separate requirements-dev.txt
+  - Tests: 79 → 142
 
 ## Next
 
+- **Audit batch 2 — real password gate** (needs a Hugin.tsx change). The `/password-hash` prefix is enough to derive today's word, the seed is in the public frontend bundle, and the backend never checks the password. Plan: frontend sends the typed word in a header; backend compares it with `hmac.compare_digest` (accepting yesterday's word briefly around UTC midnight); delete `/password-hash`; remove the seed from Hugin.tsx; rotate `HUGIN_SEED`; fail at startup if the seed is missing instead of using "default-seed".
+- **Audit batch 3 — recommendation quality and cost**:
+  - Use Claude's keywords — they're generated but never sent to TMDb. Resolve via `/search/keyword` to IDs (cached) and pass `with_keywords` (pipe-joined)
+  - Cache TMDb detail and OMDb lookups in memory (the Pi doesn't sleep, so caches persist)
+  - Consider Haiku 5.5 (`claude-haiku-5-5`, ~10x cheaper). Needs effort `low` and a higher max_tokens because thinking counts toward the cap
 - **Behind the Build page** — at /projects/behind-the-build/hugin, documenting the project's story and decisions.
 - **GitHub profile card** — add Hugin to the GitHub profile README (Jcube101/Jcube101).
-- **Custom domain** (optional) — hugin.job-joseph.com via DNS CNAME to Render.
 
 ## Security & Hardening
 
 The password gate exists only in the frontend — the backend API is
-publicly accessible to anyone who knows the URL. The following work
-is needed before this is considered production-hardened.
+publicly accessible to anyone who knows the URL, and CORS does not stop
+scripts. Audit batch 2 (above) closes this.
 
 ### Rate limiting (high priority) ✅
 - slowapi added — /recommend: 10/min, /recommend-group: 5/min per IP
-- Group endpoint stricter because each mood hits Claude API
+- Group endpoint stricter because group prompts are longer (it is still one Claude call)
+- Through the Cloudflare tunnel, uvicorn reads the visitor IP from X-Forwarded-For, so limits are per visitor
 - Tested: 429 returned after threshold
 
 ### Input validation (high priority) ✅
@@ -64,10 +83,12 @@ is needed before this is considered production-hardened.
 - Anthropic is pay-per-use — rate limiting covers this indirectly
 
 ### API key safety (medium priority) ✅
-- Global exception handler catches unhandled errors, returns generic
+- Error middleware catches unhandled errors, returns generic
   `{"error": "Something went wrong. Please try again."}` with 500
-- Re-raises HTTPException, RequestValidationError, RateLimitExceeded
-  so FastAPI's built-in handlers still work
+  (replaced the global exception handler in audit batch 1; it now keeps
+  CORS headers and logs the traceback)
+- 422 and 429 keep FastAPI's / slowapi's own handlers
+- Log lines have api_key/apikey values redacted
 - Tested: deliberate crash returns generic message, no stack traces
 
 ### Group mode abuse prevention (medium priority) ✅
@@ -81,7 +102,7 @@ is needed before this is considered production-hardened.
 - [x] Mood > 500 chars returns 422
 - [x] Malformed JSON returns 422
 - [x] Group moods array > 4 is rejected
-- [x] CORS rejects requests from non job-joseph.com origins
+- [x] CORS rejects requests from non job-joseph.com origins (browsers only — not an access control)
 - [x] No API keys or stack traces in any error response
 - [x] OMDb daily limit has a protection mechanism
 - [x] python password.py returns correct word after 5:30 AM IST

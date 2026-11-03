@@ -195,3 +195,67 @@ class TestOmdbDailyLimit:
         info = get_omdb_call_count()
         assert info["calls"] == 0
         assert info["date"] != "2000-01-01"
+
+
+class TestOmdbHardening:
+
+    def test_uses_https(self):
+        assert omdb.OMDB_BASE.startswith("https://")
+
+    @pytest.mark.parametrize("failure", [
+        httpx.ConnectError("refused"),
+        httpx.RemoteProtocolError("reset"),
+        httpx.ReadTimeout("slow"),
+    ])
+    @pytest.mark.asyncio
+    async def test_network_errors_return_empty_dict(self, failure):
+        async def mock_get(url, params=None, **kwargs):
+            raise failure
+
+        mock_client = MagicMock()
+        mock_client.get = mock_get
+        with patch("omdb._get_client", return_value=mock_client):
+            assert await enrich_with_omdb("tt0000001") == {}
+
+    @pytest.mark.asyncio
+    async def test_not_found_response_returns_empty_dict(self):
+        async def mock_get(url, params=None, **kwargs):
+            return _mock_httpx_response({"Response": "False", "Error": "Incorrect IMDb ID."})
+
+        mock_client = MagicMock()
+        mock_client.get = mock_get
+        with patch("omdb._get_client", return_value=mock_client):
+            assert await enrich_with_omdb("tt0000001") == {}
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_returns_empty_dict(self):
+        response = _mock_httpx_response({})
+        response.json.side_effect = ValueError("not json")
+
+        async def mock_get(url, params=None, **kwargs):
+            return response
+
+        mock_client = MagicMock()
+        mock_client.get = mock_get
+        with patch("omdb._get_client", return_value=mock_client):
+            assert await enrich_with_omdb("tt0000001") == {}
+
+    @pytest.mark.asyncio
+    async def test_parallel_calls_cannot_overshoot_daily_cap(self):
+        import asyncio
+        sent = []
+
+        async def mock_get(url, params=None, **kwargs):
+            sent.append(params["i"])
+            await asyncio.sleep(0.01)
+            return _mock_httpx_response({"imdbRating": "7.0", "Ratings": []})
+
+        mock_client = MagicMock()
+        mock_client.get = mock_get
+        omdb._reset_if_new_day()
+        omdb._call_count = omdb.OMDB_DAILY_LIMIT - 1
+        with patch("omdb._get_client", return_value=mock_client):
+            await asyncio.gather(*[enrich_with_omdb(f"tt{i}") for i in range(5)])
+
+        assert len(sent) == 1
+        assert omdb._call_count == omdb.OMDB_DAILY_LIMIT

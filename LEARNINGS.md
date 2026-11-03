@@ -124,3 +124,39 @@ But the health check endpoint responded fine from the browser's address bar. The
 The fix was adding `https://preview--job-joseph.lovable.app` to the allow_origins list.
 
 The lesson: CORS failures and timeout failures look identical from the frontend — the request "doesn't work" and you get no useful error in the response body. When a new deployment environment silently fails, check CORS before debugging cold starts, network issues, or backend bugs. The browser's Network tab shows the difference (a CORS error has no response body and usually a specific console warning), but it's easy to miss if you're looking at the wrong place. Any time you add a new frontend deployment target (preview URLs, staging, new domain), update CORS first — it's the most likely thing to break and the easiest to miss.
+
+## A comma in TMDb means "every genre"
+
+TMDb's `with_genres=27,10749` means horror AND romance; `27|10749` means horror OR romance. Hugin always joined with commas, so every extra genre Claude added made the pool smaller. Horror + romance rated 7.5+ was 2 films on 1 page — with a random page from 1–5, the user got nothing 80% of the time. Group mode was hit hardest, because "find the intersection" invites Claude to list several genres.
+
+The fix was a ladder of searches, each looser than the last: every genre → any genre → lower rating bar. Results are topped up (deduped by id) until there are enough films, so the most faithful matches come first. The user's own filters are never relaxed — only Claude's guesses are.
+
+The lesson: when an LLM's output becomes query parameters, check what the API does with *combinations* of them, not just single values. One genre worked fine in testing; three genres quietly collapsed the pool.
+
+## Sorting by rating needs a real vote floor
+
+With `sort_by=vote_average.desc` and `vote_count.gte=50`, TMDb's top comedies were films like "The Way to the Heart" (143 votes, 9.9). A film rated 9.9 by 143 people isn't better than Parasite at 8.5 from 21,000 — it just has a small, enthusiastic audience. Raising the floor to 300 votes put Parasite, Pulp Fiction and Forrest Gump at the top, and pools stayed large (1,000+ comedies). Gem mode keeps its own band (150–3,000 votes) so hidden gems are still possible without the noise.
+
+The lesson: an average is only meaningful with enough samples behind it. Any "sort by rating" needs a minimum count, and the right minimum is found by looking at what actually comes back, not by picking a round number.
+
+## Error responses need CORS headers too
+
+The global `@app.exception_handler(Exception)` returned a friendly 500, but in Starlette that handler runs in the outermost layer — outside CORSMiddleware. So crash responses had no `Access-Control-Allow-Origin` header, and the browser blocked them. The frontend saw a "CORS error", never the message. That's probably part of why the "CORS cold start false positive" earlier felt so confusing: real crashes looked like CORS failures too.
+
+The fix was a small middleware registered *before* CORSMiddleware (Starlette wraps later middleware around earlier ones, so it runs inside CORS). It catches the exception, logs the traceback, and returns the friendly 500, which then gets CORS headers on the way out. The old isinstance re-raise for HTTPException / validation / rate-limit errors turned out to be dead code — those exceptions have their own handlers that run first.
+
+The lesson: check what headers your *error* responses carry, not just your successful ones. And a handler that swallows exceptions must log them, or production failures disappear without a trace.
+
+## Never trust LLM output, even as JSON
+
+`_parse_response()` checked the JSON shape but not the values. `"gem_mode": "false"` — a string — is truthy in Python, so it switched gem mode on. Any `sort_by` went straight to TMDb. Extra keys were echoed back in `params_used`, so a crafted mood could make the API return whatever text it liked.
+
+Two layers fixed it. Structured outputs (`output_config.format` with a JSON schema) make the API constrain Claude's reply to the right shape. Then `_clean_params()` rebuilds the params from scratch: only known keys, genres from the known list, vote_floor clamped, sort_by from an allow-list, and gem_mode only if it is literally `true`.
+
+The lesson: an LLM's reply is user input with extra steps. A schema guarantees the shape; your own validation guarantees the meaning. Build the output from what you allow, rather than passing through what you were given.
+
+## A truncated hash can still give away the secret
+
+`/password-hash` returned the first 16 hex characters of `SHA-256(seed + date)`, on the assumption that a hash reveals nothing. But the password is chosen from the first 4 bytes of that same hash — which are the first 8 hex characters of the prefix. Anyone could take the public prefix, do `int(prefix[:8], 16) % 29`, and look up the word in the public word list. Confirmed against the live server.
+
+The lesson: hashing isn't hiding if you publish the exact bits your secret is derived from. When something is "safe to expose", trace exactly which bits it shares with the secret. The real fix (audit batch 2) is to check the password on the server so nothing derived from the seed needs to leave it.

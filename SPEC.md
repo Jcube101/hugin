@@ -17,7 +17,7 @@ Hugin solves this by turning a free-text mood description into a curated shortli
 
 ### Why FastAPI
 
-Job already built the Word Translator project with FastAPI. Same pattern, same deployment target (Render), minimal learning curve. FastAPI's native async support matters because every request fans out to Claude + TMDb + OMDb.
+Job already built the Word Translator project with FastAPI. Same pattern, same deployment target (Render at the time; Hugin now runs on the Pi behind a Cloudflare tunnel), minimal learning curve. FastAPI's native async support matters because every request fans out to Claude + TMDb + OMDb.
 
 ### Why no database
 
@@ -40,11 +40,11 @@ Hugin is gated by a daily password that rotates at UTC midnight:
 3. `integer % 29` indexes into WORD_LIST (29 words: ember, dusk, reel, etc.)
 4. The resulting word is today's password
 
-The API only exposes a 16-character hash prefix via `GET /password-hash` — never the seed or the plain password. The frontend independently derives the word using the same seed (hardcoded directly in Hugin.tsx — Lovable personal plan does not support build secrets, so `VITE_HUGIN_SEED` is not read from environment variables) and compares against user input client-side.
+The API exposes a 16-character hash prefix via `GET /password-hash` — never the seed or the plain password. **Known issue:** the first 8 hex characters of that prefix are exactly the bytes used to pick the word, so the prefix plus the public word list is enough to work out today's password. The backend also doesn't check the password itself. A server-side check is planned (ROADMAP.md, audit batch 2). The frontend independently derives the word using the same seed (hardcoded directly in Hugin.tsx — Lovable personal plan does not support build secrets, so `VITE_HUGIN_SEED` is not read from environment variables) and compares against user input client-side.
 
 ## Mood-to-params logic (mood.py)
 
-Claude receives a system prompt defining it as Hugin, a movie mood interpreter. Given a mood string, it returns a JSON object:
+Claude receives a system prompt defining it as Hugin, a movie mood interpreter. Given a mood string, it returns a JSON object. Structured outputs (`output_config.format` with a JSON schema) constrain the reply to this shape:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -54,28 +54,46 @@ Claude receives a system prompt defining it as Hugin, a movie mood interpreter. 
 | gem_mode | boolean | True ONLY for explicit hidden/obscure/underrated requests — not mood words like "dark" or "tense" |
 | sort_by | string | "vote_average.desc" or "popularity.desc" |
 
-The response is hardened by `_parse_response()`:
-- Strips markdown code fences if Claude wraps the JSON
-- Maps genre name strings to TMDb IDs via a fallback lookup table
-- Filters out any non-integer genre values
-- Appends ".desc" to sort_by if Claude omits the suffix
+The reply is model output shaped by user text, so it is never trusted. `_parse_response()` and `_clean_params()`:
+- Strip markdown code fences or a sentence around the JSON (safety net — structured outputs should prevent both)
+- Map genre name strings to TMDb IDs and drop anything not in the 18 known genre IDs
+- Clamp vote_floor to 5.5–8.0 (non-numbers fall back to 6.5)
+- Fall back to "vote_average.desc" for any other sort_by (after appending a missing ".desc")
+- Treat gem_mode as true only for the boolean `true` (the string "false" is not true)
+- Drop any keys outside the five above, so `params_used` can't carry arbitrary text
 
-Group mode sends all moods together and asks Claude to find the intersection.
+Group mode sends all moods together in a single Claude call and asks Claude to find the intersection.
+
+## Search logic (tmdb.py)
+
+TMDb reads `with_genres=35,18` as "every genre" and `35|18` as "any genre". Requiring every genre is the most faithful match, but narrow combinations can leave only a handful of films (horror + romance rated 7.5+ is 2 films). So discover_movies() tops up results, deduped by id, from progressively looser searches until it has enough:
+
+| Step | Genres | vote_average.gte | vote_count.gte |
+|------|--------|------------------|----------------|
+| 1 | every genre (`,`) | vote_floor | 300 |
+| 2 (2+ genres only) | any genre (`\|`) | vote_floor | 300 |
+| 3 | any genre (`\|`) | min(vote_floor, 6.0) | 100 |
+
+The user's filters (language, animation, year) are never dropped. Usually step 1 is enough. The 300-vote floor stops rating-sorted results filling up with obscure films rated 9+ by a few dozen people.
 
 ## Gem mode logic (tmdb.py)
 
-When `gem_mode` is true, the TMDb Discover query changes:
+When `gem_mode` is true, a gem search runs before the steps above:
 
 | Parameter | Standard | Gem mode |
 |-----------|----------|----------|
-| vote_count.gte | 50 | 50 |
+| vote_count.gte | 300 | 150 |
 | vote_count.lte | (none) | 3000 |
 | vote_average.gte | vote_floor | 7.5 |
-| sort_by | from params | vote_average.desc |
-| with_genres | all genre IDs | first genre ID only |
-| page range | 1-5 | 1-2 |
+| sort_by | from params | from params |
+| with_genres | see search steps | first genre ID only |
 
-Limiting to the first genre and capping the page range prevents empty results on smaller result pools. Pages are also capped to 1–2 when any filter is active (original_language, exclude_animation, or min_year). If gem_mode returns zero results, a fallback retry runs with gem_mode disabled and page=1.
+If the gem search finds anything, those results are returned. If it finds nothing, `gem_mode` is set to false in `params_used` and the standard search steps run.
+
+## Paging (tmdb.py)
+
+- No `page`: random page 1–5, or 1–2 when filters or gem mode are active.
+- Explicit `page`: honoured. It is first wrapped into TMDb's 1–500 range; if it is past the last page of results, it wraps round using TMDb's `total_pages` (page 7 of a 2-page set becomes page 1). So "try again" keeps cycling through pages that exist.
 
 ## Endpoint contracts
 
@@ -96,13 +114,12 @@ Limiting to the first genre and capping the page range prevents empty results on
 }
 ```
 
-- `original_language`: ISO 639-1 code (e.g. "en", "hi", "ko") or null
+- `original_language`: 2-letter ISO 639-1 code (e.g. "en", "hi", "ko"). Case and spaces are normalised; null, "" and "any" mean no filter
 - `exclude_animation`: boolean, default false — adds `without_genres=16`
-- `min_year`: integer year or null — adds `primary_release_date.gte`
-- `page`: integer or null — explicit TMDb result page for "try again" cycling
+- `min_year`: integer 0–2100 or null — adds `primary_release_date.gte`; 0 means no filter
+- `page`: integer 0–10000 or null — explicit page for "try again" cycling; 0 means random (see Paging)
 
-All optional fields are optional. Omitting them produces identical behaviour
-to before. Filters pass directly to TMDb Discover, bypassing Claude.
+All optional fields are optional. Filters pass directly to TMDb Discover, bypassing Claude.
 
 **Response:**
 ```json
@@ -142,8 +159,9 @@ to before. Filters pass directly to TMDb Discover, bypassing Claude.
 }
 ```
 
-- Returns 5 results in solo mode
+- Returns up to 5 results in solo mode (fewer only if even the loosest search step finds fewer)
 - `params_used` shows what Claude interpreted so the frontend can display it
+- If a movie's TMDb detail or OMDb lookup fails, the movie is still returned without those fields
 
 ### POST /recommend-group
 
@@ -156,25 +174,30 @@ to before. Filters pass directly to TMDb Discover, bypassing Claude.
 
 ### Input validation
 
-Both endpoints enforce Pydantic Field() constraints:
+Both endpoints share a Pydantic `Filters` base model:
 - `mood`: min 1, max 500 characters
 - `moods`: min 1, max 4 items, each min 1 / max 500 characters
-- `original_language`: max 10 characters if provided
+- `original_language`: 2-letter code (see above)
+- `min_year`: 0–2100; `page`: 0–10000
 - Invalid inputs return 422 with Pydantic validation details
 
 ### Rate limiting
 
 Per-IP rate limits via slowapi:
 - `/recommend`: 10 requests per minute
-- `/recommend-group`: 5 requests per minute (stricter because each mood
-  hits the Claude API)
+- `/recommend-group`: 5 requests per minute (stricter because group
+  prompts are longer)
 - Exceeding the limit returns 429 Too Many Requests
 
 ### Error handling
 
 - Unhandled exceptions return `{"error": "Something went wrong. Please try again."}`
-  with status 500 — no stack traces, API keys, or internal details
+  with status 500 — no stack traces, API keys, or internal details. The
+  traceback is logged on the server (API keys redacted).
+- The error middleware runs inside CORSMiddleware, so 500 responses keep
+  their CORS headers and the browser can read the message
 - Validation errors (422) and rate limits (429) use their own handlers
+- Failed enrichment lookups (TMDb detail, OMDb) never fail the request
 
 ## Frontend (in the main job-joseph.com repo)
 
@@ -187,6 +210,6 @@ Built as a page inside job-joseph.com (existing React app), not a separate Lovab
 - **Group mode** — up to 3 people enter moods on the same screen, then 3 shared picks.
 - **Design** — follows existing site conventions (Plus Jakarta Sans, teal primary, orange accent, dark mode).
 - **Skeleton loading states** — not spinners. Cards render as grey shapes that fill in.
-- **"Try again"** — re-queries the API. Uses page randomization for freshness.
-- **API target** — calls https://hugin-5i4y.onrender.com directly.
+- **"Try again"** — re-queries the API. Can pass an incrementing `page`; the backend wraps it round to pages that exist.
+- **API target** — calls https://hugin.job-joseph.com directly (the old Render URL is suspended).
 - **Seed handling** — `VITE_HUGIN_SEED` is hardcoded in Hugin.tsx because Lovable personal plan does not support build secrets.

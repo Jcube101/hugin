@@ -311,3 +311,100 @@ class TestErrorHandling:
         assert "secret crash" not in body
         assert "main.py" not in body
         assert "mood.py" not in body
+
+
+class TestCorsOnErrors:
+
+    def test_500_response_keeps_cors_header(self):
+        error_client = TestClient(app, raise_server_exceptions=False)
+        with patch("main.interpret_mood", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+            r = error_client.post(
+                "/recommend", json={"mood": "test"},
+                headers={"Origin": "https://job-joseph.com"},
+            )
+        assert r.status_code == 500
+        assert r.headers.get("access-control-allow-origin") == "https://job-joseph.com"
+
+    def test_unknown_origin_gets_no_cors_header(self, client):
+        r = client.get("/", headers={"Origin": "https://evil.example"})
+        assert "access-control-allow-origin" not in r.headers
+
+    def test_crash_is_logged(self, caplog):
+        error_client = TestClient(app, raise_server_exceptions=False)
+        with patch("main.interpret_mood", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+            error_client.post("/recommend", json={"mood": "test"})
+        assert any("Unhandled error on POST /recommend" in r.message for r in caplog.records)
+
+
+class TestLogRedaction:
+
+    def test_api_keys_redacted_from_log_lines(self):
+        import logging
+        from main import _RedactingFormatter
+        record = logging.LogRecord(
+            "hugin.test", logging.WARNING, __file__, 1,
+            "GET https://api.example/x?api_key=SECRET1&page=2 and ?apikey=SECRET2", None, None,
+        )
+        line = _RedactingFormatter("%(message)s").format(record)
+        assert "SECRET1" not in line and "SECRET2" not in line
+        assert "page=2" in line
+
+
+class TestServiceEndpoints:
+
+    def test_head_on_root_for_uptime_checks(self, client):
+        assert client.head("/").status_code == 200
+
+    @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+    def test_api_docs_not_public(self, client, path):
+        assert client.get(path).status_code == 404
+
+
+class TestFilterValidation:
+
+    @pytest.mark.parametrize("body", [
+        {"mood": "x", "page": -1},
+        {"mood": "x", "page": 10_001},
+        {"mood": "x", "min_year": -5},
+        {"mood": "x", "min_year": 99999},
+        {"mood": "x", "original_language": "korean"},
+        {"mood": "x", "original_language": "!!"},
+    ])
+    def test_invalid_filters_return_422(self, client, body):
+        assert client.post("/recommend", json=body).status_code == 422
+
+    def test_group_endpoint_validates_filters_too(self, client):
+        r = client.post("/recommend-group", json={"moods": ["x"], "page": -1})
+        assert r.status_code == 422
+
+    @pytest.mark.parametrize("extra, expected_filters, expected_page", [
+        ({"page": 0, "min_year": 0, "original_language": ""}, {"original_language": None, "min_year": None}, None),
+        ({"original_language": "Any"}, {"original_language": None}, None),
+        ({"original_language": " KO ", "page": 3}, {"original_language": "ko"}, 3),
+    ])
+    def test_empty_values_mean_no_filter(self, client, extra, expected_filters, expected_page):
+        mock_discover = AsyncMock(return_value=MOCK_MOVIES)
+        with patch("main.interpret_mood", new_callable=AsyncMock, return_value=dict(MOCK_PARAMS)), \
+             patch("main.discover_movies", mock_discover), \
+             patch("main.get_movie_detail", new_callable=AsyncMock, return_value=MOCK_DETAIL), \
+             patch("main.enrich_with_omdb", new_callable=AsyncMock, return_value=MOCK_OMDB):
+            r = client.post("/recommend", json={"mood": "fun", **extra})
+
+        assert r.status_code == 200
+        kwargs = mock_discover.call_args.kwargs
+        for key, value in expected_filters.items():
+            assert kwargs["filters"][key] == value
+        assert kwargs["page"] == expected_page
+
+
+class TestEnrichmentFailures:
+
+    def test_failed_lookups_still_return_movies(self, client):
+        with patch("main.interpret_mood", new_callable=AsyncMock, return_value=dict(MOCK_PARAMS)), \
+             patch("main.discover_movies", new_callable=AsyncMock, return_value=MOCK_MOVIES), \
+             patch("main.get_movie_detail", new_callable=AsyncMock, return_value={}), \
+             patch("main.enrich_with_omdb", new_callable=AsyncMock, return_value={}):
+            r = client.post("/recommend", json={"mood": "fun"})
+
+        assert r.status_code == 200
+        assert [m["title"] for m in r.json()["results"]] == [m["title"] for m in MOCK_MOVIES]

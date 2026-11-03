@@ -7,16 +7,16 @@ Hugin is a personal project, but PRs are welcome if you find a bug or have an im
 See [README.md](README.md) for full instructions. The short version:
 
 ```bash
-git clone https://github.com/yourusername/hugin.git
+git clone https://github.com/Jcube101/hugin.git
 cd hugin
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements-dev.txt   # runtime deps + pytest
 ```
 
 ## Environment variables
 
-You need a `.env` file with four keys:
+You need a `.env` file with four keys (plus optional `HUGIN_DOCS=1` to enable `/docs` locally):
 
 | Variable | Source |
 |----------|--------|
@@ -41,7 +41,7 @@ This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -
 
 ## Tests
 
-Run the full test suite (79 tests, all external APIs mocked):
+Run the full test suite (142 tests, all external APIs mocked):
 
 ```bash
 pytest tests/ -v
@@ -58,6 +58,12 @@ curl -X POST http://127.0.0.1:8000/recommend \
 ```
 
 Note: the server has rate limits (10/min for `/recommend`, 5/min for `/recommend-group`).
+
+## Deploying
+
+The live service runs from the repo folder on the Pi (`hugin.service`), so work on a branch or git worktree. To deploy: merge to `main`, then `sudo systemctl restart hugin` and check `journalctl -u hugin.service -f`.
+
+Dependencies are pinned in `requirements.txt`. To upgrade one, change the pin, run the tests, then restart the service.
 
 ## Frontend
 

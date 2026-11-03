@@ -2,13 +2,14 @@ import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+import mood
 from mood import _parse_response, interpret_mood, interpret_group_mood, GENRE_NAME_TO_ID
 
 
 def _mock_claude_response(text):
     """Create a mock Anthropic response object."""
     response = MagicMock()
-    response.content = [MagicMock(text=text)]
+    response.content = [MagicMock(type="text", text=text)]
     return response
 
 
@@ -75,7 +76,8 @@ class TestParseResponse:
         result = _parse_response(raw)
         assert result["sort_by"] == "vote_average.desc"
 
-    def test_sort_by_with_asc_suffix_preserved(self):
+    def test_sort_by_outside_allowed_values_uses_default(self):
+        # Ascending rating would surface the worst films first
         raw = json.dumps({
             "genres": [35],
             "keywords": [],
@@ -84,7 +86,7 @@ class TestParseResponse:
             "sort_by": "vote_average.asc",
         })
         result = _parse_response(raw)
-        assert result["sort_by"] == "vote_average.asc"
+        assert result["sort_by"] == "vote_average.desc"
 
     def test_empty_genres_list(self):
         raw = json.dumps({
@@ -109,7 +111,7 @@ class TestParseResponse:
             "gem_mode": False,
         })
         result = _parse_response(raw)
-        assert "sort_by" not in result or result.get("sort_by") is None
+        assert result["sort_by"] == "vote_average.desc"
 
     def test_missing_gem_mode(self):
         raw = json.dumps({
@@ -119,7 +121,85 @@ class TestParseResponse:
             "sort_by": "popularity.desc",
         })
         result = _parse_response(raw)
-        assert result.get("gem_mode") is None
+        assert result["gem_mode"] is False
+
+
+class TestOutputValidation:
+    """Claude's reply is shaped by user text, so nothing in it is trusted."""
+
+    def test_string_false_gem_mode_is_not_true(self):
+        result = _parse_response('{"genres": [35], "gem_mode": "false"}')
+        assert result["gem_mode"] is False
+
+    def test_string_true_gem_mode_is_not_true(self):
+        result = _parse_response('{"genres": [35], "gem_mode": "true"}')
+        assert result["gem_mode"] is False
+
+    def test_real_true_gem_mode_kept(self):
+        result = _parse_response('{"genres": [35], "gem_mode": true}')
+        assert result["gem_mode"] is True
+
+    def test_unknown_keys_dropped(self):
+        result = _parse_response('{"genres": [35], "essay": "injected text"}')
+        assert set(result) == {"genres", "keywords", "vote_floor", "gem_mode", "sort_by"}
+
+    @pytest.mark.parametrize("raw_floor, expected", [
+        (9.9, 8.0), (2, 5.5), ("7.2", 7.2), ("abc", 6.5), (None, 6.5),
+    ])
+    def test_vote_floor_clamped(self, raw_floor, expected):
+        result = _parse_response(json.dumps({"genres": [35], "vote_floor": raw_floor}))
+        assert result["vote_floor"] == expected
+
+    def test_nan_vote_floor_uses_default(self):
+        result = _parse_response('{"genres": [35], "vote_floor": NaN}')
+        assert result["vote_floor"] == 6.5
+
+    def test_unknown_sort_by_uses_default(self):
+        result = _parse_response('{"genres": [35], "sort_by": "revenue.desc"}')
+        assert result["sort_by"] == "vote_average.desc"
+
+    def test_genre_ids_not_in_tmdb_list_dropped(self):
+        result = _parse_response('{"genres": [35, 99999, true, 35, 18]}')
+        assert result["genres"] == [35, 18]
+
+    def test_keywords_cleaned_and_capped(self):
+        raw = json.dumps({"genres": [], "keywords": [" heist ", "", 5] + [f"k{i}" for i in range(10)]})
+        result = _parse_response(raw)
+        assert result["keywords"][0] == "heist"
+        assert len(result["keywords"]) == 5
+
+    def test_sentence_around_json_is_handled(self):
+        result = _parse_response('Here you go:\n{"genres": [27], "sort_by": "popularity.desc"}\nEnjoy!')
+        assert result["genres"] == [27]
+
+    def test_non_object_json_raises(self):
+        with pytest.raises(ValueError):
+            _parse_response("[35, 18]")
+
+
+class TestClaudeRequest:
+
+    def test_client_has_short_timeout_and_one_retry(self):
+        assert mood.client.timeout == 15.0
+        assert mood.client.max_retries == 1
+
+    @pytest.mark.asyncio
+    async def test_requests_structured_output(self):
+        with patch("mood.client.messages.create", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = _mock_claude_response('{"genres": [35]}')
+            await interpret_mood("funny")
+
+        fmt = mock_create.call_args.kwargs["output_config"]["format"]
+        assert fmt["type"] == "json_schema"
+        assert fmt["schema"]["additionalProperties"] is False
+
+    @pytest.mark.asyncio
+    async def test_reads_text_block_not_first_block(self):
+        response = MagicMock()
+        response.content = [MagicMock(type="thinking"), MagicMock(type="text", text='{"genres": [18]}')]
+        with patch("mood.client.messages.create", new_callable=AsyncMock, return_value=response):
+            result = await interpret_mood("sad")
+        assert result["genres"] == [18]
 
 
 class TestInterpretMood:

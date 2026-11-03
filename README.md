@@ -5,29 +5,33 @@ Hugin is a mood-based movie recommendation API. You describe how you feel in fre
 ## Tech stack
 
 - **Python 3.11+** / **FastAPI** — async API server
-- **Claude API** (Anthropic) — interprets free-text mood into TMDb query parameters
+- **Claude API** (Anthropic) — interprets free-text mood into TMDb query parameters, using structured outputs
 - **TMDb API** — movie discovery and detail
 - **OMDb API** — Rotten Tomatoes scores, IMDb ratings, content ratings
 - **httpx** — async HTTP client with connection pooling
 - **slowapi** — rate limiting (10/min solo, 5/min group per IP)
-- **pytest** / **pytest-asyncio** — 79 tests, all external APIs mocked
+- **pytest** / **pytest-asyncio** — 142 tests, all external APIs mocked
 
 ## Live deployment
 
-The backend is deployed on Render (free tier):
+The backend runs on a Raspberry Pi as the systemd service `hugin.service`, exposed through a Cloudflare tunnel:
 
-- **URL:** https://hugin-5i4y.onrender.com
-- **Health check:** `curl https://hugin-5i4y.onrender.com/` → `{"status": "Hugin is watching"}`
+- **URL:** https://hugin.job-joseph.com
+- **Health check:** `curl https://hugin.job-joseph.com/` → `{"status": "Hugin is watching"}`
+- **Logs:** `journalctl -u hugin.service -f`
+- **Deploy:** the repo folder on the Pi is the live code. Merge to `main`, then `sudo systemctl restart hugin`.
 - **Frontend:** lives at [job-joseph.com/projects/hugin](https://job-joseph.com/projects/hugin) (built as a page in the main site repo)
+
+The old Render deployment (`hugin-5i4y.onrender.com`) is suspended; `render.yaml` is kept for reference.
 
 ## Local setup
 
 ```bash
-git clone https://github.com/yourusername/hugin.git
+git clone https://github.com/Jcube101/hugin.git
 cd hugin
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements-dev.txt   # runtime deps + pytest
 ```
 
 Create a `.env` file in the project root:
@@ -37,6 +41,7 @@ TMDB_API_KEY=your_tmdb_api_key
 OMDB_API_KEY=your_omdb_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
 HUGIN_SEED=your_secret_seed_phrase
+HUGIN_DOCS=1          # optional: enables /docs locally (off in production)
 ```
 
 Start the server:
@@ -61,9 +66,9 @@ This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -
 
 ## API endpoints
 
-### GET /
+### GET / (and HEAD /)
 
-Health check.
+Health check. `HEAD` is supported for uptime monitors.
 
 ```bash
 curl http://127.0.0.1:8000/
@@ -89,6 +94,8 @@ curl http://127.0.0.1:8000/health
 
 Returns today's SHA-256 hash prefix (rotates daily at UTC midnight). The frontend uses this for its password gate.
 
+> **Known issue:** the prefix is enough to work out today's word. Replacing this with a server-side check is planned (see ROADMAP.md).
+
 ```bash
 curl http://127.0.0.1:8000/password-hash
 ```
@@ -99,7 +106,18 @@ curl http://127.0.0.1:8000/password-hash
 
 ### POST /recommend
 
-Solo mode. Send a mood description (1–500 chars), get 5 enriched movie picks. Optional filters: `original_language` (ISO 639-1 code), `exclude_animation` (boolean), `min_year` (integer), `page` (integer, for cycling through result pages on "try again").
+Solo mode. Send a mood description (1–500 chars), get up to 5 enriched movie picks.
+
+Optional filters:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `original_language` | 2-letter ISO 639-1 code | e.g. `"ko"`. `null`, `""` or `"any"` mean no filter |
+| `exclude_animation` | boolean | default `false` |
+| `min_year` | integer 0–2100 | `0` or `null` mean no filter |
+| `page` | integer 0–10000 | for "try again" cycling. `0` or `null` pick a random page; pages past the end wrap round |
+
+Invalid values return 422.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/recommend \
@@ -148,9 +166,11 @@ curl -X POST http://127.0.0.1:8000/recommend \
 }
 ```
 
+If a movie's detail or OMDb lookup fails, the movie is still returned without those fields.
+
 ### POST /recommend-group
 
-Group mode. Send 1–4 moods (each 1–500 chars), get 3 shared picks. Same optional filters and `page` parameter apply.
+Group mode. Send 1–4 moods (each 1–500 chars), get up to 3 shared picks. Same optional filters apply.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/recommend-group \
@@ -160,10 +180,16 @@ curl -X POST http://127.0.0.1:8000/recommend-group \
 
 Response shape is the same as `/recommend`, with 3 results instead of 5.
 
+### Errors
+
+- `422` — invalid input (Pydantic validation details in the body)
+- `429` — rate limit exceeded
+- `500` — `{"error": "Something went wrong. Please try again."}`. The traceback goes to the server log, never to the client. CORS headers are kept so the browser can read the message.
+
 ## Running Tests
 
 ```bash
-source .venv/Scripts/activate  # Windows
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pytest tests/ -v
 ```
 

@@ -1,8 +1,9 @@
-fastapi
-uvicorn
-httpx
-anthropic
-python-dotenv
-slowapi
-pytest
-pytest-asyncio
+# Runtime dependencies, pinned to the versions running on the Pi.
+# Upgrade deliberately: change a pin, run the tests, then restart hugin.service.
+fastapi==0.136.1
+uvicorn==0.47.0
+httpx==0.28.1
+anthropic==0.102.0
+pydantic==2.13.4
+python-dotenv==1.2.2
+slowapi==0.1.9
