@@ -30,7 +30,10 @@ and reports back. Trusted, perceptive, personal.
   Uses Haiku 4.5 (claude-haiku-4-5-20251001) — mood interpretation is a
   lightweight structured extraction task that doesn't require Sonnet.
   Structured outputs (output_config.format json_schema) constrain the reply.
-- TMDb is the primary data source (Discover endpoint)
+- TMDb is the primary data source (Discover endpoint), called via the
+  alternate domain api.tmdb.org — from the Pi's network, TLS handshakes to
+  api.themoviedb.org fail ~60% of the time (hostname-based filtering on
+  the path). Don't switch it back without re-testing from the Pi.
 - OMDb is the enrichment layer (RT score, IMDb rating) via shared imdb_id
 - All external calls are async with explicit timeouts: TMDb/OMDb 10s per
   request, Claude 15s with 1 retry (the SDK default is 10 minutes).

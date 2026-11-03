@@ -7,7 +7,9 @@ import httpx
 
 log = logging.getLogger("hugin.tmdb")
 
-TMDB_BASE = "https://api.themoviedb.org/3"
+# TMDb's alternate API domain. From the Pi's network, TLS handshakes to
+# api.themoviedb.org fail ~60% of the time; api.tmdb.org serves the same API reliably.
+TMDB_BASE = "https://api.tmdb.org/3"
 TMDB_MAX_PAGE = 500          # TMDb rejects page numbers above this
 REQUEST_TIMEOUT = 10.0
 RETRY_STATUSES = {500, 502, 503, 504}

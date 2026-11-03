@@ -160,3 +160,13 @@ The lesson: an LLM's reply is user input with extra steps. A schema guarantees t
 `/password-hash` returned the first 16 hex characters of `SHA-256(seed + date)`, on the assumption that a hash reveals nothing. But the password is chosen from the first 4 bytes of that same hash — which are the first 8 hex characters of the prefix. Anyone could take the public prefix, do `int(prefix[:8], 16) % 29`, and look up the word in the public word list. Confirmed against the live server.
 
 The lesson: hashing isn't hiding if you publish the exact bits your secret is derived from. When something is "safe to expose", trace exactly which bits it shares with the secret. The real fix (audit batch 2) is to check the password on the server so nothing derived from the seed needs to leave it.
+
+## When TCP connects but TLS doesn't, suspect the hostname
+
+Right after deploying audit batch 1, a live request returned zero films. The new logging showed why: all three TMDb searches failed with `ConnectError`. Before the batch, the same failure would have been an unlogged 500. Testing from the Pi with curl, the TCP connection to TMDb succeeded every time, but the TLS handshake failed 6 times in 10 (curl exit 35), on IPv4 and IPv6 alike. TMDb's alternate API domain, `api.tmdb.org`, served the same API 25/25 times from the same machine at the same moment.
+
+Same CDN, same API, different hostname — so something on the network path is interfering based on the name in the TLS handshake (SNI). Some Indian ISPs are known to do this to themoviedb.org. It never showed on Render, because Render's servers were in Oregon, on a different network.
+
+The fix was one line: `TMDB_BASE = "https://api.tmdb.org/3"`.
+
+The lesson: when a service moves to a new network, re-test every outbound dependency from that network. And "connection reset" errors that come and go aren't always the remote server's fault. If TCP connects but TLS fails, compare a second hostname for the same service before blaming load or rate limits. It also explains some of the earlier "connection storm" resets: they may have been this all along.
