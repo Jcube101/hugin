@@ -28,7 +28,7 @@ def _word_on(date_str, seed="test"):
 class TestGetTodayPassword:
 
     def test_known_seed_and_date(self):
-        seed = "yearning"
+        seed = "known-test-seed"
         date_str = "2026-05-07"
         raw = hashlib.sha256(f"{seed}{date_str}".encode()).digest()
         idx = int.from_bytes(raw[:4], "big") % len(WORD_LIST)

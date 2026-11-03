@@ -206,15 +206,18 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
     continue."}. The check runs inside the rate-limited endpoint, so wrong
     guesses count toward the limit and never reach Claude.
 - Rollout (audit batch 2):
-  - Phase A ✅ backend accepts the header and serves /verify-password;
-    enforcement off, so the old frontend keeps working.
+  - Phase A ✅ live — backend accepts the header and serves
+    /verify-password; enforcement off, so the old frontend keeps working.
+    /password-hash removed.
   - Phase B — Hugin.tsx calls /verify-password, sends the header, re-shows
-    the gate on 401, and drops the seed + local derivation. Written, not yet
-    published — must not be published before Phase A is live.
-  - Phase C — set HUGIN_REQUIRE_PASSWORD=1, rotate HUGIN_SEED (the old one
-    was a string literal in Hugin.tsx, so it is in the site's git history
-    and published bundles), optionally enlarge WORD_LIST (safe once the
-    frontend no longer derives the word).
+    the gate on 401, and drops the seed + local derivation. Committed in the
+    site repo (c11822a); must be published from Lovable before Phase C.
+  - Phase C — set HUGIN_REQUIRE_PASSWORD=1 and replace HUGIN_SEED with a
+    long random value. The old seed is public: it was a string literal in
+    Hugin.tsx (site git history + published bundles) and was used as the
+    example seed in tests/test_password.py on the public GitHub repo until
+    November 2026. Rotating makes those copies worthless; no history
+    rewrite needed. Never put the real seed in tests or docs.
 - To get today's password locally: `python password.py` from the hugin/
   directory (or the `hugin-password` alias on the Pi). This calls
   load_dotenv() before reading HUGIN_SEED; without it the script now
@@ -222,7 +225,10 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 - Until Phase B is published, the frontend derives the word itself from the
   seed, hardcoded as a string literal in Hugin.tsx (Lovable personal plan
   has no build secrets)
-- WORD_LIST has 29 evocative single words (ember, dusk, reel, etc.)
+- WORD_LIST has 29 evocative single words (ember, dusk, reel, etc.).
+  Staying at 29 is a deliberate choice (Job, Nov 2026): Hugin is meant to be
+  fun, and guessing the word only gets rate-limited movie picks — the API
+  keys never leave the backend. Don't suggest enlarging it.
 
 ## Pain points this solves
 1. Can't decide what to watch — decision fatigue from too many options

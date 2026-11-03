@@ -49,7 +49,7 @@
 
 ## Next
 
-- **Audit batch 2 — real password gate** — Phase A built (backend: `/verify-password`, `X-Hugin-Password` header check behind `HUGIN_REQUIRE_PASSWORD`, seed required, 1-hour midnight grace, `/password-hash` removed — the frontend never used it). Phase B (Hugin.tsx) written, publish after Phase A is live. Phase C: enforce, rotate `HUGIN_SEED` (it was a string literal in Hugin.tsx), optionally enlarge the word list.
+- **Audit batch 2 — real password gate** — Phase A built (backend: `/verify-password`, `X-Hugin-Password` header check behind `HUGIN_REQUIRE_PASSWORD`, seed required, 1-hour midnight grace, `/password-hash` removed — the frontend never used it). Phase B (Hugin.tsx) written, publish after Phase A is live. Phase C: enforce and replace `HUGIN_SEED` with a random value (the old one is public: it was in Hugin.tsx and in a test on the public GitHub repo). The 29-word list stays — deliberate, it's meant to be fun.
 - **Audit batch 3 — recommendation quality and cost**:
   - Use Claude's keywords — they're generated but never sent to TMDb. Resolve via `/search/keyword` to IDs (cached) and pass `with_keywords` (pipe-joined)
   - Cache TMDb detail and OMDb lookups in memory (the Pi doesn't sleep, so caches persist)
