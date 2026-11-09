@@ -85,7 +85,9 @@ Nothing planned right now — pick from the ideas below.
 - **Today's word without a terminal** — tap the raven on the gate 3 times quickly; it hops, flies off and glides back ("Hugin has flown."), and `POST /send-word` emails Job the word through the n8n workflow *Hugin Word Email*
 - The email's **Open Hugin unlocked** button links to `/projects/hugin?word=…`, which checks and saves the word, then removes it from the address bar
 - Safe to discover: the call takes no input and the recipient is fixed in n8n. One email per 2 minutes, 10 a day, 5 calls an hour per IP
-- Tests: 227 → 243
+- Tests: 227 → 243 (site: 9 new tests in `Hugin.test.tsx`)
+- Live on job-joseph.com since 10 Nov 2026 (backend restarted, site published through Lovable); tested end to end from a phone
+- The first live test found n8n's Gmail login had expired (it also sends Sentinel alerts). Job reconnected it and moved the Google Cloud app to "In production", so it no longer expires every 7 days
 
 ## Security and hardening
 
@@ -93,7 +95,7 @@ Everything below is in place. The biggest gap — a password gate that existed o
 
 | Area | Status |
 |------|--------|
-| Password gate | `POST /verify-password`; `X-Hugin-Password` checked on every recommendation call; wrong guesses get 401, count toward the rate limit and never reach Claude; seed is a random value only in `.env`; the page has no seed |
+| Password gate | `POST /verify-password`; `X-Hugin-Password` checked on every recommendation call; wrong guesses get 401, count toward the rate limit and never reach Claude; seed is a random value only in `.env`; the page has no seed. The raven (`POST /send-word`) emails the word only to Job and takes no input, so finding it gets a stranger nothing |
 | Rate limiting | Per visitor IP (read from the Cloudflare tunnel's `X-Forwarded-For`): `/recommend` 10/min, `/recommend-group` 5/min (longer prompts), `/verify-password` 10/min, `/send-word` 5/hour (plus one email per 2 minutes and 10 a day overall) |
 | Input validation | Shared Pydantic `Filters` model: mood 1–500 chars; group moods 1–4, each 1–500; `original_language` 2-letter code; `min_year` 0–2100; `page` 0–10000. Claude's reply is validated too: unknown keys dropped, values clamped |
 | CORS | `https://job-joseph.com`, `https://preview--job-joseph.lovable.app`, `http://localhost:5173` (the last two for preview and dev) |

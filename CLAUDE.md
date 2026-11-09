@@ -351,7 +351,12 @@ gate 3 times (each within 600 ms) calls POST /send-word.
 - Group mode: up to 3 people enter moods → 3 shared picks
 - Mobile-first — couch use case, one thumb, under 30 seconds start to pick
 - Behind the Build write-up: HuginDetail.tsx (/projects/behind-the-build/hugin),
-  updated by Job for the server-side gate (Nov 2026)
+  updated by Job for the server-side gate (Nov 2026). It doesn't mention the
+  raven (it's an easter egg).
+- Privacy: /privacy (Privacy.tsx + src/data/privacyInventory.ts) lists what
+  Hugin sends, including Gmail emailing Job "Hugin's daily word". If the
+  backend starts sending or storing anything new, update /privacy by hand
+  (see "Privacy & Terms upkeep" in the site's AGENTS.md).
 
 ## Security
 - **CORS** — locked to `["https://job-joseph.com", "https://preview--job-joseph.lovable.app", "http://localhost:5173"]`.
@@ -360,7 +365,9 @@ gate 3 times (each within 600 ms) calls POST /send-word.
   not stop scripts or curl.
 - **Rate limiting** — slowapi with per-IP limits:
   /recommend: 10 requests/minute, /recommend-group: 5 requests/minute,
-  /verify-password: 10 requests/minute (so guessing the word is slow).
+  /verify-password: 10 requests/minute (so guessing the word is slow),
+  /send-word: 5 requests/hour (plus one email per 2 minutes and 10 a day
+  overall, in notify.py).
   uvicorn trusts X-Forwarded-For from cloudflared on 127.0.0.1, so limits
   apply to real visitor IPs.
 - **Input validation** — Pydantic models (shared Filters base):
@@ -374,7 +381,8 @@ gate 3 times (each within 600 ms) calls POST /send-word.
   rate limits (429) and TMDb outages (503) keep their own handlers.
 - **Logging** — "hugin.*" loggers at INFO, everything else at WARNING
   (httpx logs request URLs containing API keys at INFO). A redacting
-  formatter strips api_key/apikey values from every log line.
+  formatter strips api_key/apikey values from every log line. notify.py
+  never logs the n8n webhook URL (its path is the secret) or the word.
 - **API docs** — disabled in production (HUGIN_DOCS=1 to enable locally).
 
 ## Build sequence

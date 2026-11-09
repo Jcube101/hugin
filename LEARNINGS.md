@@ -220,4 +220,6 @@ The lesson: when something has to be reachable from a public page, design it so 
 
 The first live test logged "Today's word emailed to Job" but no email arrived. The n8n webhook was set to answer as soon as it received the request, so it said 200 before the Gmail step ran, and Gmail then failed: the saved Google login had expired ("refresh token is invalid, expired, revoked"). Switching the webhook to answer after the last node means a Gmail failure comes back as a 500, which Hugin logs and which frees the 2-minute wait so Job can tap again.
 
+The fix for the login itself was to reconnect it in n8n and move the Google Cloud app from "Testing" to "In production". The same login sends Sentinel's alerts, so those had been failing silently too.
+
 The lesson: if the caller's log line claims an outcome ("emailed"), the webhook has to wait for that outcome. And Google logins saved in n8n can expire. A Google Cloud app left in "Testing" mode issues logins that last 7 days.

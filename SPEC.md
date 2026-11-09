@@ -75,6 +75,10 @@ TMDb has the best Discover API — it supports filtering by genre, vote average,
 
 The core insight: mood-to-query translation is a natural language understanding problem. "Something funny but not dumb" needs to become `{genres: [35], vote_floor: 7.0, sort_by: "vote_average.desc"}`. Rule-based keyword matching would be brittle. Claude handles nuance, slang, and multi-mood group intersections natively.
 
+### Why n8n sends the daily-word email
+
+Job's n8n already has a Gmail login and a webhook-to-email workflow (Sentinel's alerts), so the raven reuses that pattern instead of putting SMTP credentials in Hugin. Hugin only needs one secret URL, and the recipient lives in n8n, outside anything the browser can reach.
+
 ## Password mechanic
 
 Hugin is gated by a daily password that rotates at UTC midnight:

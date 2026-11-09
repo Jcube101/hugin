@@ -15,7 +15,7 @@ How the pieces fit, the search rules and the full API are in [SPEC.md](SPEC.md).
 
 ## Tech stack
 
-Python 3.11+ and FastAPI · Claude API (Haiku 5.5) · TMDb and OMDb · runs on a Raspberry Pi behind a Cloudflare tunnel · no database
+Python 3.11+ and FastAPI · Claude API (Haiku 5.5) · TMDb and OMDb · n8n and Gmail (emails Job the daily word) · runs on a Raspberry Pi behind a Cloudflare tunnel · no database
 
 ## Running it locally
 
