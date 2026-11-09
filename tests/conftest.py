@@ -8,6 +8,8 @@ import pytest
 os.environ["HUGIN_SEED"] = "test-seed"
 os.environ["HUGIN_REQUIRE_PASSWORD"] = "0"
 os.environ["HUGIN_DOCS"] = "0"
+# Never the real n8n webhook: a test must not email Job
+os.environ["HUGIN_WORD_WEBHOOK_URL"] = "https://n8n.invalid/webhook/hugin-word-test"
 
 
 @pytest.fixture
@@ -102,9 +104,11 @@ def _clear_caches():
     """Each test starts with empty caches, so one test's mocked
     responses can't leak into the next."""
     import mood
+    import notify
     import omdb
     import tmdb
     tmdb.clear_caches()
     omdb.clear_cache()
     mood.clear_cache()
+    notify.reset()
     yield

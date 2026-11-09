@@ -59,6 +59,8 @@ Optional settings for `.env`, all filters, the response format and error codes a
 python password.py      # or, on the Pi: hugin-password
 ```
 
+Away from a terminal, tap the raven on the Hugin page 3 times quickly: it flies off and emails you the word, with a link that opens Hugin unlocked ([how it works](SPEC.md#post-send-word)).
+
 The word changes at UTC midnight (5:30 AM IST). Run it as a script: `python -c "from password import ..."` skips loading `.env` and fails with "HUGIN_SEED is not set".
 
 ## Tests
@@ -67,7 +69,7 @@ The word changes at UTC midnight (5:30 AM IST). Run it as a script: `python -c "
 pytest tests/ -v
 ```
 
-227 tests. Claude, TMDb and OMDb are all mocked, so no API keys are needed.
+243 tests. Claude, TMDb and OMDb are all mocked, so no API keys are needed.
 
 ## Live deployment
 

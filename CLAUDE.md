@@ -56,6 +56,7 @@ hugin/
 ├── tmdb.py              ← TMDb search: keywords, search steps, gem slot, ranked paging, movie detail, caches
 ├── omdb.py              ← OMDb enrichment by imdb_id over HTTPS (daily cap)
 ├── password.py          ← Daily word + is_valid_password() (run: python password.py)
+├── notify.py            ← Emails Job today's word via n8n (the raven easter egg)
 ├── requirements.txt     ← Runtime deps, pinned
 ├── requirements-dev.txt ← + pytest, pytest-asyncio
 ├── .env                 ← Gitignored. Contains all API keys + HUGIN_SEED
@@ -67,19 +68,21 @@ hugin/
 ├── LEARNINGS.md
 ├── render.yaml          ← Legacy Render config (Render service is suspended)
 ├── CONTRIBUTING.md
-└── tests/               ← 227 tests, all external APIs mocked (pytest tests/ -v)
-    ├── conftest.py      ← Shared fixtures; pins env vars and clears caches per test
+└── tests/               ← 243 tests, all external APIs mocked (pytest tests/ -v)
+    ├── conftest.py      ← Shared fixtures; pins env vars (incl. a fake webhook URL) and clears caches per test
     ├── test_password.py ← Password derivation, validation, grace period (21 tests)
     ├── test_cache.py    ← TTL cache expiry and eviction (7 tests)
     ├── test_mood.py     ← Claude reply parsing, validation, model choice, refusal fallback, cache (42 tests)
     ├── test_tmdb.py     ← Search steps, keywords, gem slot, ranked paging, retries, outages, detail (70 tests)
     ├── test_omdb.py     ← OMDb enrichment, error handling, daily cap, cache (22 tests)
-    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, password gate, logging (65 tests)
+    ├── test_notify.py   ← Raven email: cooldown, daily limit, failures, nothing secret logged (10 tests)
+    └── test_main.py     ← Endpoint tests: validation, CORS on errors, 503, password gate, /send-word, logging (71 tests)
 
 ## API endpoints
 - GET/HEAD /               → health check (HEAD for uptime monitors)
 - GET  /health             → OMDb daily call count/limit/date + cache sizes
 - POST /verify-password    → {password: str} → 200 {ok: true} | 401 {error} (10/min per IP)
+- POST /send-word          → no body → always 202 {ok: true}; emails Job today's word (5/hour per IP)
 - POST /recommend          → {mood: str, ...filters} → up to 5 enriched movie objects
 - POST /recommend-group    → {moods: str[], ...filters} → up to 3 enriched movie objects
 
@@ -106,6 +109,9 @@ HUGIN_SEED=          ← secret phrase, never commit this
 HUGIN_DOCS=          ← optional; "1" turns on /docs locally
 HUGIN_REQUIRE_PASSWORD= ← "1" = recommendation endpoints require the
                            X-Hugin-Password header ("1" in production)
+HUGIN_WORD_WEBHOOK_URL= ← n8n "Hugin Word Email" webhook for /send-word.
+                           The random path is the secret; never log it.
+                           Production only (unset = nothing is sent)
 
 ## Movie result object shape
 Each result returned by /recommend or /recommend-group contains the full
@@ -233,7 +239,9 @@ request is sent so parallel calls can't overshoot the cap. When the cap is
 reached, enrich_with_omdb() returns {} and movies show without ratings.
 
 ## Key logic — password (password.py)
-- get_today_password() → plain word, for Job's local use only, NEVER via API
+- get_today_password() → plain word, for Job's local use only, NEVER in an
+  API response (notify.py emails it to Job's fixed address; that's the only
+  other place it goes)
 - is_valid_password(candidate) → True for today's word, or yesterday's in
   the first hour after UTC midnight (GRACE_PERIOD). Ignores case and
   surrounding spaces (phone keyboards capitalise). Compares with
@@ -261,13 +269,34 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
   GitHub repo. The seed was rotated when enforcement went on, so those old
   copies are worthless; no history rewrite was needed.
 - To get today's password locally: `python password.py` from the hugin/
-  directory (or the `hugin-password` alias on the Pi). This calls
+  directory (or the `hugin-password` alias on the Pi). Away from a
+  terminal: the raven (see Key logic — the raven). This calls
   load_dotenv() before reading HUGIN_SEED; without it the script now
   fails loudly instead of printing a wrong word.
 - WORD_LIST has 29 evocative single words (ember, dusk, reel, etc.).
   Staying at 29 is a deliberate choice (Job, Nov 2026): Hugin is meant to be
   fun, and guessing the word only gets rate-limited movie picks — the API
   keys never leave the backend. Don't suggest enlarging it.
+
+## Key logic — the raven (notify.py, Nov 2026)
+Lets Job get today's word from his phone. Tapping the raven icon on the
+gate 3 times (each within 600 ms) calls POST /send-word.
+- The endpoint takes no input. notify.py works out the word and posts
+  {"word": ...} to Job's n8n workflow "Hugin Word Email": Webhook → "Is It
+  One Word" (^[a-z]{2,20}$) → Gmail to Job's own address with an "Open
+  Hugin unlocked" link (/projects/hugin?word=...). The recipient is fixed in
+  n8n, so a stranger who finds the gesture can only send Job an email.
+  The workflow uses n8n's "Gmail account" login. If emails stop, reconnect
+  it in n8n (it expired once, Nov 2026; the Google Cloud app is now "In
+  production" so it shouldn't expire every 7 days again).
+- Limits: one email per 2 minutes, 10 per UTC day (in memory, reset on
+  restart), 5 calls/hour per IP. The slot is claimed before sending; a
+  failed send frees the 2-minute wait. The reply is always 202 {ok: true}.
+- The send runs as a background task. The webhook answers after Gmail
+  finishes (responseMode lastNode), so a Gmail failure arrives as a 500 and
+  is logged as a warning without the URL (the URL's path is the secret).
+- n8n doesn't save successful runs of this workflow (the word would sit in
+  its history); failed runs are saved for debugging.
 
 ## Pain points this solves
 1. Can't decide what to watch — decision fatigue from too many options
@@ -302,6 +331,12 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
   word in localStorage ("hugin_password") and sends it as X-Hugin-Password;
   a 401 re-locks the page. On load, a saved word is re-checked; only a 401
   deletes it. The page has no seed and can't work out the word.
+- The raven: 3 quick taps on the bird icon hop, then fly it off and back,
+  show "Hugin has flown." and call POST /send-word (fire and forget).
+  Animations are raven-hop / raven-fly in tailwind.config.ts.
+- ?word= link (from the raven's email): removed from the address bar,
+  checked with /verify-password and saved like a typed word. An old link
+  shows the gate's error, then falls back to a saved word that works.
 - API base: one API_BASE constant = https://hugin.job-joseph.com
 - Filters sent: original_language null for "Any"; min_year null, or 2010
   when the switch is on; exclude_animation always a boolean
@@ -365,6 +400,8 @@ reached, enrich_with_omdb() returns {} and movies show without ratings.
 17. ✅ Behind the Build page at /projects/behind-the-build/hugin
 18. ✅ Add Hugin card to GitHub profile README (Jcube101/Jcube101)
 19. ✅ Hugin.tsx badges from movie.is_gem
+20. ✅ The raven: 3 taps email Job today's word (POST /send-word + n8n),
+    ?word= unlock link
 
 ## Deployment
 - Hosted on the Raspberry Pi (jobpi) as systemd service `hugin.service`:

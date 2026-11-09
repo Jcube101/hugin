@@ -7,7 +7,7 @@ import os
 import re
 from typing import Annotated, List
 
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
@@ -21,6 +21,7 @@ import tmdb
 from tmdb import TMDbUnavailable, discover_movies, get_movie_detail
 import omdb
 from omdb import enrich_with_omdb, get_omdb_call_count
+import notify
 from password import is_valid_password
 
 # Fail fast: without a seed the password gate can't work
@@ -191,6 +192,16 @@ def health():
 async def verify_password(request: Request, body: PasswordCheck):
     if not is_valid_password(body.password):
         raise PasswordRequired("That's not today's word.")
+    return {"ok": True}
+
+
+@app.post("/send-word", status_code=202)
+@limiter.limit("5/hour")
+async def send_word(request: Request, background_tasks: BackgroundTasks):
+    # The raven easter egg: emails Job today's word (see notify.py). Takes no
+    # input, and the reply is the same whether or not an email went out.
+    if notify.reserve_send():
+        background_tasks.add_task(notify.send_today_word)
     return {"ok": True}
 
 

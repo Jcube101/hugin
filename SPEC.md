@@ -27,11 +27,13 @@ flowchart LR
         TMDB["tmdb.py<br/>keywords, search steps,<br/>gem slot, paging"]
         OMDB["omdb.py<br/>ratings"]
         CACHE[("cache.py<br/>in-memory caches")]
+        NOTIFY["notify.py<br/>emails Job the word"]
     end
 
     CLAUDE["Claude API<br/>Haiku 5.5<br/>(Haiku 4.5 if declined)"]
     TMDBAPI["TMDb API<br/>api.tmdb.org"]
     OMDBAPI["OMDb API"]
+    N8N["n8n: Hugin Word Email<br/>(Gmail to Job)"]
 
     U -- "HTTPS + X-Hugin-Password" --> CF
     CF --> API
@@ -39,6 +41,7 @@ flowchart LR
     API --> MOOD --> CLAUDE
     API --> TMDB --> TMDBAPI
     API --> OMDB --> OMDBAPI
+    API -- "POST /send-word" --> NOTIFY --> N8N
     MOOD -.-> CACHE
     TMDB -.-> CACHE
     OMDB -.-> CACHE
@@ -84,6 +87,8 @@ Hugin is gated by a daily password that rotates at UTC midnight:
 The seed is a long random value that exists only in `.env` on the Pi.
 
 The backend checks the password: `POST /verify-password` for the gate, and an `X-Hugin-Password` header on every recommendation call (enforced in production via `HUGIN_REQUIRE_PASSWORD=1`). Yesterday's word is accepted for the first hour after UTC midnight; case and spaces are ignored. Wrong guesses are rate limited and never reach Claude.
+
+Job can get the word without a terminal: tapping the raven on the page 3 times emails it to him (see [POST /send-word](#post-send-word)).
 
 The old `GET /password-hash` endpoint was removed: its prefix gave the word away (its first 8 hex characters are the bytes that pick it), and the frontend never used it. The page no longer knows the seed: until November 2026 it derived the word in the browser from a seed hardcoded in Hugin.tsx, so the seed was rotated when the server-side check went live.
 
@@ -146,6 +151,7 @@ Base URL: `https://hugin.job-joseph.com` (locally `http://127.0.0.1:8000`). The 
 | GET, HEAD | `/` | Health check (`HEAD` for uptime monitors) | — |
 | GET | `/health` | OMDb usage today and cache sizes | — |
 | POST | `/verify-password` | Checks a typed password against today's word | 10/min |
+| POST | `/send-word` | Emails Job today's word (the raven easter egg) | 5/hour |
 | POST | `/recommend` | Solo: 4 picks and a hidden gem | 10/min |
 | POST | `/recommend-group` | Group: 3 shared picks | 5/min (longer prompts) |
 
@@ -178,6 +184,18 @@ Recommendation calls must send today's word in an `X-Hugin-Password` header. Thi
 - `422` — empty, or longer than 100 characters
 
 Case and surrounding spaces are ignored, because phone keyboards capitalise.
+
+### POST /send-word
+
+No body (anything sent is ignored). Always `202 {"ok": true}`, whether or not an email went out.
+
+Emails Job today's word, so he can unlock Hugin away from a terminal. The page calls it when the raven is tapped 3 times quickly (`notify.py`):
+
+1. The backend works out today's word and posts `{"word": "..."}` to the n8n workflow **Hugin Word Email** (`HUGIN_WORD_WEBHOOK_URL` in `.env`; the random path is the secret and is never logged).
+2. n8n drops anything that isn't one lowercase word, then emails Job through Gmail: subject "Hugin · today's word: …", the word, and an **Open Hugin unlocked** button linking to `job-joseph.com/projects/hugin?word=…`.
+3. The webhook answers after the email is sent, so a Gmail failure comes back as a 500 and is logged as a warning in `journalctl -u hugin`.
+
+Why it's safe for anyone to find: the caller sends nothing and the recipient is fixed inside n8n, so the most a stranger can do is send Job an email. Limits: one email every 2 minutes and 10 a day (reset at UTC midnight and on restart), plus 5 calls an hour per IP. A failed send frees the 2-minute wait so Job can tap again. If `HUGIN_WORD_WEBHOOK_URL` isn't set, nothing is sent and a warning is logged.
 
 ### POST /recommend
 
@@ -265,7 +283,7 @@ Invalid input returns 422 with Pydantic's validation details.
 | 401 | `{"error": "Enter today's word to continue."}` | A recommendation call without today's word (checked before Claude is called) |
 | 401 | `{"error": "That's not today's word."}` | A wrong word sent to `/verify-password` |
 | 422 | Pydantic validation details | Invalid input |
-| 429 | `{"error": "Rate limit exceeded: 10 per 1 minute"}` | Over the rate limit |
+| 429 | `{"error": "Rate limit exceeded: 10 per 1 minute"}` | Over the rate limit (also `/send-word`, at 5 per hour) |
 | 500 | `{"error": "Something went wrong. Please try again."}` | Anything unexpected. The traceback is logged on the server with API keys redacted; nothing internal reaches the client |
 | 503 | `{"error": "Couldn't reach the movie database. Please try again in a moment."}` | TMDb can't be reached |
 
@@ -277,6 +295,8 @@ Invalid input returns 422 with Pydantic's validation details.
 Built as a page inside job-joseph.com (existing React app), not a separate Lovable project. File: `src/pages/Hugin.tsx`. Route: `/projects/hugin`.
 
 - **Password gate** — first screen. Single text input. Checked by `POST /verify-password`; the word is saved in localStorage and sent as `X-Hugin-Password`; a 401 re-locks the page.
+- **The raven** — 3 quick taps (each within 600 ms) on the bird icon above the gate call `POST /send-word`. Each tap makes it hop; the third sends it flying off and back, and the line under the heading reads "Hugin has flown." for a few seconds. Nothing on the page says the icon does anything.
+- **Unlock link** — the raven's email links to `/projects/hugin?word=…`. The page removes the word from the address bar, checks it with `/verify-password` and saves it like a typed word. An old link (e.g. yesterday's email) shows the gate's error and then falls back to a saved word that still works.
 - **Primary input** — large free-text mood box. Quick-fill mood chips below (e.g. "cozy rainy day", "intense thriller") as shortcuts, not replacements.
 - **Mobile-first** — designed for the couch use case. One thumb, portrait orientation, under 30 seconds from open to first pick.
 - **Solo mode** — 5 movie cards: 4 picks and a hidden gem last. Poster, title, year, genres, runtime, IMDb rating, RT score, hidden gem badge on films with `is_gem: true`.

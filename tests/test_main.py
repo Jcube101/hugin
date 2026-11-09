@@ -571,3 +571,47 @@ class TestBatch3Wiring:
     def test_health_reports_cache_sizes(self, client):
         cache = client.get("/health").json()["cache"]
         assert set(cache) == {"movie_details", "keywords", "omdb_ratings", "mood_interpretations"}
+
+
+class TestSendWord:
+    """The raven easter egg: POST /send-word emails Job today's word via n8n."""
+
+    def test_tap_sends_and_says_ok(self, client):
+        with patch("notify.send_today_word", new_callable=AsyncMock) as send:
+            r = client.post("/send-word", headers={"Origin": "https://job-joseph.com"})
+        assert r.status_code == 202
+        assert r.json() == {"ok": True}
+        assert r.headers.get("access-control-allow-origin") == "https://job-joseph.com"
+        send.assert_awaited_once_with()
+
+    def test_body_is_ignored(self, client):
+        # There is nothing to steer: no address, no message
+        with patch("notify.send_today_word", new_callable=AsyncMock) as send:
+            r = client.post("/send-word", json={"email": "someone@example.com", "word": "x"})
+        assert r.status_code == 202
+        send.assert_awaited_once_with()
+
+    def test_repeat_tap_same_reply_but_no_second_email(self, client):
+        with patch("notify.send_today_word", new_callable=AsyncMock) as send:
+            first = client.post("/send-word")
+            second = client.post("/send-word")
+        assert first.status_code == second.status_code == 202
+        assert first.json() == second.json()
+        assert send.await_count == 1
+
+    def test_works_without_todays_word(self, client):
+        # The whole point: it's how Job gets the word when he doesn't have it
+        with patch("main.REQUIRE_PASSWORD", True), \
+             patch("notify.send_today_word", new_callable=AsyncMock) as send:
+            r = client.post("/send-word")
+        assert r.status_code == 202
+        send.assert_awaited_once()
+
+    def test_rate_limited_per_ip(self, client):
+        with patch("notify.send_today_word", new_callable=AsyncMock):
+            statuses = [client.post("/send-word").status_code for _ in range(6)]
+        assert statuses[:5] == [202] * 5
+        assert statuses[5] == 429
+
+    def test_get_not_allowed(self, client):
+        assert client.get("/send-word").status_code == 405

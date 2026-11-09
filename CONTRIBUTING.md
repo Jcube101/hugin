@@ -16,7 +16,7 @@ pip install -r requirements-dev.txt   # runtime deps + pytest
 
 ## Environment variables
 
-You need a `.env` file with four keys. Optional: `HUGIN_DOCS=1` enables `/docs` locally, and `HUGIN_REQUIRE_PASSWORD=1` makes recommendation calls require the `X-Hugin-Password` header (it's on in production).
+You need a `.env` file with four keys. Optional: `HUGIN_DOCS=1` enables `/docs` locally, `HUGIN_REQUIRE_PASSWORD=1` makes recommendation calls require the `X-Hugin-Password` header (it's on in production), and `HUGIN_WORD_WEBHOOK_URL` is the n8n webhook that `POST /send-word` uses to email Job the word (production only; leave it unset locally so you don't email him).
 
 | Variable | Source |
 |----------|--------|
@@ -43,13 +43,13 @@ This calls `load_dotenv()` before reading `HUGIN_SEED`. Do **not** use `python -
 
 ## Tests
 
-Run the full test suite (227 tests, all external APIs mocked):
+Run the full test suite (243 tests, all external APIs mocked):
 
 ```bash
 pytest tests/ -v
 ```
 
-No API keys are needed for tests. All Claude, TMDb, and OMDb calls are mocked.
+No API keys are needed for tests. All Claude, TMDb, OMDb and n8n calls are mocked, and `tests/conftest.py` points the webhook at a fake URL so a test can never email Job.
 
 To test manually with curl:
 
@@ -60,7 +60,7 @@ curl -X POST http://127.0.0.1:8000/recommend \
   -d '{"mood": "something funny but not dumb"}'
 ```
 
-The password header only matters when `HUGIN_REQUIRE_PASSWORD=1`. The server has per-IP rate limits: 10/min for `/recommend`, 5/min for `/recommend-group`, 10/min for `/verify-password`.
+The password header only matters when `HUGIN_REQUIRE_PASSWORD=1`. The server has per-IP rate limits: 10/min for `/recommend`, 5/min for `/recommend-group`, 10/min for `/verify-password`, 5/hour for `/send-word`.
 
 ## Deploying
 

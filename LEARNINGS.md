@@ -209,3 +209,15 @@ The lesson: pagination over a cascade of fallback queries isn't pagination over 
 With a 150-vote floor, the "hidden gem horror" search returned films TMDb rated 8.3 that IMDb rated 4.7–5.8, plus Michael Jackson's *Thriller* music video. A few hundred votes from enthusiastic fans can push an average very high. Raising the floor to 300, requiring 60+ minutes, and requiring a year since release turned the same search into Come and See, The Cabinet of Dr. Caligari and What Ever Happened to Baby Jane?.
 
 The lesson: "high rating, few votes" is exactly where averages are least reliable. A hidden-gem filter needs a minimum sample size, not just a maximum.
+
+## An easter egg is safe when finding it gets you nothing
+
+The raven (3 taps emails Job the word) lives in a public page's JavaScript, so anyone can read how to trigger it. That's fine because the secret was never the gesture: `/send-word` takes no input, and the n8n workflow has Job's address fixed. The worst a stranger can do is send Job an email, and the rate limits cap that at 10 a day. If the call had taken an email address, or returned the word, hiding the gesture would have been the only protection, and that's no protection.
+
+The lesson: when something has to be reachable from a public page, design it so that discovering it is harmless, rather than relying on it staying hidden.
+
+## "Respond immediately" webhooks hide failures
+
+The first live test logged "Today's word emailed to Job" but no email arrived. The n8n webhook was set to answer as soon as it received the request, so it said 200 before the Gmail step ran, and Gmail then failed: the saved Google login had expired ("refresh token is invalid, expired, revoked"). Switching the webhook to answer after the last node means a Gmail failure comes back as a 500, which Hugin logs and which frees the 2-minute wait so Job can tap again.
+
+The lesson: if the caller's log line claims an outcome ("emailed"), the webhook has to wait for that outcome. And Google logins saved in n8n can expire. A Google Cloud app left in "Testing" mode issues logins that last 7 days.
